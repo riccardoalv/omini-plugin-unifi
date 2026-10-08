@@ -1,0 +1,9 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {"_id": "n1", "name": "Default", "purpose": "corporate", "ip_subnet": "192.168.1.1/24", "networkgroup": "LAN", "dhcpd_enabled": true, "vlan_enabled": false},
+    {"_id": "n2", "name": "IOT", "purpose": "corporate", "ip_subnet": "192.168.20.1/24", "vlan_enabled": true, "vlan": "20", "dhcpd_enabled": true},
+    {"_id": "n3", "name": "Guests", "purpose": "guest", "ip_subnet": "192.168.30.1/24", "vlan_enabled": true, "vlan": 30},
+    {"_id": "n4", "name": "Internet 1", "purpose": "wan", "wan_networkgroup": "WAN", "vlan_enabled": true, "vlan": 2000}
+  ]
+}

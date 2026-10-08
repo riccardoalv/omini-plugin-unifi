@@ -1,0 +1,10 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {"mac": "AA:BB:CC:00:00:01", "ip": "192.168.1.50", "hostname": "pixel-8", "name": "Ricardo's phone", "is_wired": false, "ap_mac": "78:45:58:00:00:20", "essid": "Home", "radio": "na", "radio_proto": "ax", "signal": -58, "rssi": 38, "tx_rate": 1200950, "rx_rate": 864700, "tx_bytes-r": 250000, "rx_bytes-r": 12500, "oui": "Google"},
+    {"mac": "aa:bb:cc:00:00:02", "ip": "192.168.20.60", "hostname": "plug-kitchen", "is_wired": false, "ap_mac": "78:45:58:00:00:30", "essid": "IOT", "radio": "ng", "signal": -71, "tx_rate": 72200, "rx_rate": 65000, "tx_bytes-r": 0, "rx_bytes-r": 0},
+    {"mac": "aa:bb:cc:00:00:03", "ip": "192.168.1.20", "hostname": "nas", "is_wired": true, "sw_mac": "f4:92:bf:00:00:10", "sw_port": 3, "vlan": 1},
+    {"mac": "aa-bb-cc-00-00-04", "ip": "192.168.1.21", "name": "Desktop", "is_wired": true, "sw_mac": "74:ac:b9:00:00:01", "sw_port": 1},
+    {"mac": "aa:bb:cc:00:00:05", "hostname": "no-ip-yet", "is_wired": false, "ap_mac": "99:99:99:99:99:99", "essid": "Home", "radio": "6e"}
+  ]
+}

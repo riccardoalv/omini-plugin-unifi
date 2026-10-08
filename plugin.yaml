@@ -1,0 +1,44 @@
+id: unifi
+name: UniFi Network
+version: 0.1.0
+protocol: 1
+entrypoint: main.py
+timeout_s: 60
+description: >-
+  UniFi Network controller (UniFi OS consoles or the self-hosted Network
+  Application): every adopted gateway, switch and access point with ports, link
+  speed, traffic counters, LLDP and uplinks, Wi-Fi and wired clients, VLANs, WAN
+  status, CPU, memory, temperatures and pending firmware. Read-only.
+author: Omini
+homepage: https://github.com/riccardoalv/omini-plugin-unifi
+fields:
+  - key: url
+    type: url
+    label: Address
+    required: true
+    help: >-
+      The console or controller, e.g. https://192.168.1.1 (UniFi OS) or
+      https://192.168.1.10:8443 (self-hosted Network Application).
+  - key: username
+    type: string
+    label: Username
+    required: true
+    help: >-
+      A local account with the View Only role (not a UI.com / SSO account, no
+      two-factor authentication): see the plugin's README.
+  - key: password
+    type: secret
+    label: Password
+    required: true
+  - key: site
+    type: string
+    label: Site
+    default: default
+    help: >-
+      The site's internal name, as in the address of the Network application
+      (/manage/<site>/...); "default" for the first site.
+  - key: verify_tls
+    type: bool
+    label: Verify the TLS certificate
+    default: false
+    help: UniFi uses a self-signed certificate by default; turn this on if yours is trusted.

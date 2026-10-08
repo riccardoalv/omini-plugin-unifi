@@ -1,0 +1,10 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {"subsystem": "wlan", "status": "ok", "num_ap": 2, "num_user": 2},
+    {"subsystem": "wan", "status": "ok", "wan_ip": "203.0.113.10", "gw_mac": "74:ac:b9:00:00:01", "gw_name": "Dream Machine Pro", "uptime_stats": {"WAN": {"availability": 100.0, "latency_average": 9, "time_period": 86400}, "WAN2": {"availability": 0.0, "time_period": 86400}}},
+    {"subsystem": "www", "status": "ok", "latency": 11, "drops": 0, "uptime": 864000},
+    {"subsystem": "lan", "status": "ok", "num_sw": 1},
+    {"subsystem": "vpn", "status": "unknown"}
+  ]
+}

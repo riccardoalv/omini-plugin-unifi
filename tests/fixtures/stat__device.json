@@ -1,0 +1,119 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {
+      "_id": "6501a1b2c3d4e5f600000001",
+      "mac": "74:AC:B9:00:00:01",
+      "ip": "203.0.113.10",
+      "name": "Dream Machine Pro",
+      "model": "UDMPRO",
+      "type": "udm",
+      "serial": "74ACB9000001",
+      "version": "4.0.21.12345",
+      "upgradable": true,
+      "upgrade_to_firmware": "4.1.13.23456",
+      "adopted": true,
+      "state": 1,
+      "uptime": 864000,
+      "system-stats": {"cpu": "12.5", "mem": "61.3", "uptime": "864000"},
+      "sys_stats": {"loadavg_1": "0.42", "loadavg_5": "0.38", "loadavg_15": "0.35", "mem_total": 4124000000, "mem_used": 2528000000},
+      "temperatures": [
+        {"name": "CPU", "type": "cpu", "value": 58.2},
+        {"name": "Local", "type": "board", "value": 44.0},
+        {"name": "PHY", "type": "other", "value": 61.5}
+      ],
+      "storage": [
+        {"mount_point": "/volume1", "name": "HDD", "type": "hdd", "size": 2000000000000, "used": 500000000000}
+      ],
+      "ethernet_table": [
+        {"mac": "74:ac:b9:00:00:01", "num_port": 8, "name": "eth0"},
+        {"mac": "74:ac:b9:00:00:02", "num_port": 1, "name": "eth8"}
+      ],
+      "port_table": [
+        {"port_idx": 1, "name": "Port 1", "ifname": "eth0", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 123456789, "tx_bytes": 987654321, "rx_errors": 0, "tx_errors": 0, "is_uplink": false, "sfp_found": false, "network_name": "lan"},
+        {"port_idx": 2, "name": "Port 2", "ifname": "eth1", "media": "GE", "up": false, "speed": 0, "full_duplex": false, "rx_bytes": 0, "tx_bytes": 0, "rx_errors": 0, "tx_errors": 0, "is_uplink": false, "sfp_found": false, "network_name": "lan"},
+        {"port_idx": 9, "name": "Port 9", "ifname": "eth8", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 98765432100, "tx_bytes": 1234567890, "rx_errors": 3, "tx_errors": 0, "is_uplink": true, "sfp_found": false, "network_name": "wan"},
+        {"port_idx": 11, "name": "SFP+ 2", "ifname": "eth10", "media": "SFP+", "up": true, "speed": 10000, "full_duplex": true, "rx_bytes": 5555555555, "tx_bytes": 6666666666, "rx_errors": 0, "tx_errors": 0, "is_uplink": false, "sfp_found": true, "sfp_vendor": "Ubiquiti Inc.", "sfp_part": "UACC-DAC-SFP10", "sfp_serial": "AB1234", "sfp_compliance": "10G Passive DAC", "network_name": "lan"}
+      ],
+      "wan1": {"ifname": "eth8", "name": "wan", "ip": "203.0.113.10", "netmask": "255.255.255.0", "gateway": "203.0.113.1", "mac": "74:ac:b9:00:00:02", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 98765432100, "tx_bytes": 1234567890, "type": "dhcp"},
+      "wan2": {"ifname": "eth9", "name": "wan2", "ip": "198.51.100.20", "netmask": "255.255.255.252", "gateway": "198.51.100.21", "mac": "74:ac:b9:00:00:03", "up": false, "speed": 0, "rx_bytes": 1000, "tx_bytes": 2000, "type": "static"},
+      "uplink": {"type": "wire", "uplink_mac": "00:11:22:33:44:55", "ip": "203.0.113.10", "port_idx": 9}
+    },
+    {
+      "_id": "6501a1b2c3d4e5f600000002",
+      "mac": "f4:92:bf:00:00:10",
+      "ip": "192.168.1.2",
+      "name": "Rack Switch",
+      "model": "US16P150",
+      "type": "usw",
+      "serial": "F492BF000010",
+      "version": "7.1.26.15869",
+      "upgradable": false,
+      "adopted": true,
+      "state": 1,
+      "uptime": 432000,
+      "system-stats": {"cpu": "7", "mem": "38.2"},
+      "has_temperature": true,
+      "general_temperature": 52,
+      "port_table": [
+        {"port_idx": 1, "name": "Port 1", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 1111, "tx_bytes": 2222, "rx_errors": 0, "tx_errors": 1, "is_uplink": false, "poe_enable": true, "port_poe": true, "poe_power": "3.20"},
+        {"port_idx": 2, "name": "Office AP", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 3333, "tx_bytes": 4444, "rx_errors": 0, "tx_errors": 0, "is_uplink": false, "port_poe": true},
+        {"port_idx": 3, "name": "Port 3", "media": "FE", "up": true, "speed": 100, "full_duplex": false, "rx_bytes": 5, "tx_bytes": 6, "rx_errors": 0, "tx_errors": 0, "is_uplink": false},
+        {"port_idx": 17, "name": "SFP 1", "media": "SFP", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 777, "tx_bytes": 888, "rx_errors": 0, "tx_errors": 0, "is_uplink": true, "sfp_found": true, "sfp_vendor": "Ubiquiti Inc.", "sfp_part": "UF-MM-1G", "sfp_serial": "XY987", "sfp_temperature": "38.5", "sfp_voltage": "3.29", "sfp_current": "6.1", "sfp_txpower": "-5.2", "sfp_rxpower": "-6.8"}
+      ],
+      "lldp_table": [
+        {"chassis_id": "74:ac:b9:00:00:01", "port_id": "eth10", "local_port_idx": 17, "is_wired": true}
+      ],
+      "uplink": {"type": "wire", "uplink_mac": "74:ac:b9:00:00:01", "uplink_remote_port": 11, "port_idx": 17}
+    },
+    {
+      "_id": "6501a1b2c3d4e5f600000003",
+      "mac": "78:45:58:00:00:20",
+      "ip": "192.168.1.3",
+      "name": "Office AP",
+      "model": "U6PRO",
+      "type": "uap",
+      "version": "6.6.77.15402",
+      "upgradable": false,
+      "adopted": true,
+      "state": 1,
+      "uptime": 3600,
+      "system-stats": {"cpu": "4.1", "mem": "45"},
+      "port_table": [
+        {"port_idx": 1, "name": "Main", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 4444, "tx_bytes": 3333, "is_uplink": true}
+      ],
+      "radio_table": [{"name": "wifi0", "radio": "ng", "channel": 6}, {"name": "wifi1", "radio": "na", "channel": 36}],
+      "vap_table": [
+        {"name": "wlan0", "essid": "Home", "radio": "ng", "bssid": "7a:45:58:00:00:21", "up": true, "num_sta": 0, "rx_bytes": 100, "tx_bytes": 200},
+        {"name": "wlan1", "essid": "Home", "radio": "na", "bssid": "7a:45:58:00:00:22", "up": true, "num_sta": 1, "rx_bytes": 300, "tx_bytes": 400}
+      ],
+      "uplink": {"type": "wire", "uplink_mac": "f4:92:bf:00:00:10", "uplink_remote_port": 2, "port_idx": 1}
+    },
+    {
+      "_id": "6501a1b2c3d4e5f600000004",
+      "mac": "78:45:58:00:00:30",
+      "ip": "192.168.1.4",
+      "name": "Garden AP",
+      "model": "UAPM",
+      "type": "uap",
+      "version": "6.6.77.15402",
+      "adopted": true,
+      "state": 1,
+      "system-stats": {},
+      "vap_table": [
+        {"name": "wlan0", "essid": "IOT", "radio": "ng", "up": true}
+      ],
+      "uplink": {"type": "wireless", "uplink_mac": "78:45:58:00:00:20", "radio": "na"}
+    },
+    {
+      "_id": "6501a1b2c3d4e5f600000005",
+      "mac": "78:45:58:00:00:40",
+      "ip": "192.168.1.5",
+      "name": "Old AP",
+      "model": "U7LR",
+      "type": "uap",
+      "adopted": true,
+      "state": 0
+    }
+  ]
+}
