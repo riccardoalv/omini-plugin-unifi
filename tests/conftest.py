@@ -1,3 +1,4 @@
+import copy
 import json
 from functools import partial
 from pathlib import Path
@@ -29,6 +30,10 @@ class FakeController:
         self.calls: list[tuple[str, str]] = []
         self.logins = 0
         self.sessions: set[str] = set()
+        # Changes: the bodies of PUT rest/device/<id>, as sent.
+        self.puts: list[tuple[str, dict]] = []
+        self.ignore_changes = False  # answers ok but keeps nothing
+        self.switch_lags = False  # keeps the override, the switch never reports it
 
     @property
     def cookie(self) -> str:
@@ -68,6 +73,8 @@ class FakeController:
             return httpx.Response(
                 400, json={"meta": {"rc": "error", "msg": "api.err.NoSiteContext"}, "data": []}
             )
+        if request.method == "PUT":
+            return self.put(endpoint, json.loads(request.content), request)
         if endpoint in self.forbidden:
             return httpx.Response(
                 403, json={"meta": {"rc": "error", "msg": "api.err.NoPermission"}, "data": []}
@@ -77,6 +84,39 @@ class FakeController:
                 404, json={"meta": {"rc": "error", "msg": "api.err.NotFound"}, "data": []}
             )
         return httpx.Response(200, json=self.routes[endpoint])
+
+    def device(self, _id: str) -> dict | None:
+        return next((d for d in self.routes["stat/device"]["data"] if d.get("_id") == _id), None)
+
+    def put(self, endpoint: str, body: dict, request: httpx.Request) -> httpx.Response:
+        """PUT rest/device/<id>: the controller keeps the given fields and
+        provisions the switch, which then reports each port's ``enable``."""
+        kind, _, _id = endpoint.rpartition("/")
+        if kind in self.forbidden or "rest/device" in self.forbidden:
+            return httpx.Response(
+                403, json={"meta": {"rc": "error", "msg": "api.err.NoPermission"}, "data": []}
+            )
+        d = self.device(_id) if kind == "rest/device" else None
+        if d is None or request.headers.get("x-csrf-token") is None:
+            return httpx.Response(
+                400, json={"meta": {"rc": "error", "msg": "api.err.Invalid"}, "data": []}
+            )
+        self.puts.append((endpoint, copy.deepcopy(body)))
+        if not self.ignore_changes:
+            d.update(copy.deepcopy(body))
+            if not self.switch_lags:
+                disabled = {
+                    p["_id"]
+                    for p in self.routes.get("rest/portconf", {}).get("data", [])
+                    if p.get("forward") == "disabled"
+                }
+                by_idx = {o["port_idx"]: o for o in d.get("port_overrides") or []}
+                for p in d.get("port_table") or []:
+                    o = by_idx.get(p["port_idx"], {})
+                    p["enable"] = (
+                        o.get("forward") != "disabled" and o.get("portconf_id") not in disabled
+                    )
+        return httpx.Response(200, json={"meta": {"rc": "ok"}, "data": [d]})
 
     def login(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -115,6 +155,8 @@ class FakeController:
 
 
 def _install(monkeypatch, fake):
+    monkeypatch.setattr(collect_module, "VERIFY_S", 0)
+    monkeypatch.setattr(collect_module, "POLL_S", 0)
     monkeypatch.setattr(
         collect_module, "Client", partial(Client, transport=httpx.MockTransport(fake.handler))
     )

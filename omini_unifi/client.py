@@ -11,7 +11,8 @@ Two flavors of the same API:
 The flavor is detected once (``GET /`` answers 200 on UniFi OS, a redirect to
 ``/manage`` on the self-hosted application) and the session (flavor, cookies and
 CSRF token) is kept in the plugin's state folder, so the controller does not see
-a new login on every collection. Only GET requests are sent, besides the login.
+a new login on every collection. Collecting sends only GET requests, besides
+the login; ``put`` (a device's settings) is called only by ``apply``.
 """
 
 from __future__ import annotations
@@ -34,7 +35,13 @@ LOGIN_PATHS = {UNIFI_OS: "/api/auth/login", CLASSIC: "/api/login"}
 PREFIXES = {UNIFI_OS: "/proxy/network", CLASSIC: ""}
 NAMES = {UNIFI_OS: "UniFi OS", CLASSIC: "UniFi Network Application"}
 
-LOCAL_ACCOUNT = "use a local account with the View Only role (see the plugin's README)"
+LOCAL_ACCOUNT = "use a local account (see the plugin's README)"
+
+# What a View Only account is told when it tries a change.
+CHANGE_ROLE = (
+    "the account can only view: changes need an admin whose role in the Network "
+    "application is Full Management or Site Admin, not View Only (see the plugin's README)"
+)
 
 
 class Forbidden(Exception):
@@ -213,26 +220,43 @@ class Client:
         else:
             self.csrf = self.http.cookies.get("csrf_token")
 
-    # --- reads ------------------------------------------------------------------
+    # --- requests ---------------------------------------------------------------
 
     def get(self, endpoint: str) -> list[dict[str, Any]]:
         """``GET /api/s/<site>/<endpoint>``: the ``data`` list of the answer,
         signing in when there is no session or the saved one has expired."""
+        return self._call("GET", endpoint)
+
+    def put(self, endpoint: str, body: dict[str, Any]) -> list[dict[str, Any]]:
+        """``PUT /api/s/<site>/<endpoint>`` (a change: only ``apply`` calls it).
+        Whether it took effect is checked by reading again, never assumed from
+        the answer. An account that may only view gets a PluginError naming the
+        role it needs."""
+        try:
+            return self._call("PUT", endpoint, body)
+        except Forbidden as e:
+            raise PluginError(CHANGE_ROLE) from e
+
+    def _call(
+        self, method: str, endpoint: str, body: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         if not self.flavor or not self.http.cookies.jar:
             self.login()
         try:
-            return self._get(endpoint)
+            return self._request(method, endpoint, body)
         except _LoginRequired:
             self.login()
             try:
-                return self._get(endpoint)
+                return self._request(method, endpoint, body)
             except _LoginRequired as e:
                 raise PluginError("the controller rejected the session right after login") from e
 
-    def _get(self, endpoint: str) -> list[dict[str, Any]]:
+    def _request(
+        self, method: str, endpoint: str, body: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         path = f"{PREFIXES[self.flavor or CLASSIC]}/api/s/{quote(self.site, safe='')}/{endpoint}"
         headers = {"x-csrf-token": self.csrf} if self.csrf else {}
-        r = self._send("GET", path, headers=headers)
+        r = self._send(method, path, headers=headers, json=body)
         if r.headers.get("x-updated-csrf-token"):
             self.csrf = r.headers["x-updated-csrf-token"]
         msg = _meta_msg(r)

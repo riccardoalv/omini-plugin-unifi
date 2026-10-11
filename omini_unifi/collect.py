@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
+import time
 from collections.abc import Callable
 from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from omini_sdk import (
+    Change,
     Config,
     Device,
     FdbEntry,
@@ -42,6 +45,9 @@ ROLES = {
     "uxg": "router",
 }
 GATEWAYS = {"ugw", "udm", "uxg"}
+# Devices whose wired ports apply may enable or disable.
+SWITCHING = {"usw", *GATEWAYS}
+DISABLED = "disabled"
 
 # Device states in stat/device: 0 is disconnected (its data is stale).
 DISCONNECTED = 0
@@ -175,8 +181,44 @@ def transceiver(p: dict[str, Any]) -> Transceiver | None:
     return t if t.model_dump(exclude_none=True) else None
 
 
+def overrides(d: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    """port_idx → the port's override (its settings in the controller)."""
+    return {
+        o["port_idx"]: o
+        for o in d.get("port_overrides") or []
+        if isinstance(o, dict) and isinstance(o.get("port_idx"), int)
+    }
+
+
+def configured(o: dict[str, Any], disabled_profiles: set[str]) -> bool | None:
+    """Whether the port's override enables it: its ``forward``, or the
+    "Disabled" port profile (``portconf_id``); None when it says neither."""
+    if o.get("forward") == DISABLED or o.get("portconf_id") in disabled_profiles:
+        return False
+    return True if isinstance(o.get("forward"), str) else None
+
+
+def admin_enabled(
+    p: dict[str, Any], o: dict[str, Any], disabled_profiles: set[str] | None = None
+) -> bool | None:
+    """The port's administrative state: its configuration first, else what
+    the device reports (``enable``, or ``forward`` in its port table)."""
+    state = configured(o, disabled_profiles or set())
+    if state is not None:
+        return state
+    if isinstance(p.get("enable"), bool):
+        return p["enable"]
+    if isinstance(p.get("forward"), str):
+        return p["forward"] != DISABLED
+    return None
+
+
 def ports(d: dict[str, Any], names: dict[int, str]) -> list[Interface]:
     out: list[Interface] = []
+    settings = overrides(d)
+    # The state only where Omini can change it (switches and gateways): the
+    # map offers enabling and disabling the ports that report it.
+    switching = d.get("type") in SWITCHING
     for i, p in enumerate(d.get("port_table") or []):
         idx = p.get("port_idx")
         name = names.get(idx) if isinstance(idx, int) else None
@@ -190,6 +232,7 @@ def ports(d: dict[str, Any], names: dict[int, str]) -> list[Interface]:
                 connector=connector(p),
                 mac=mac(p.get("mac")),
                 up=up,
+                enabled=admin_enabled(p, settings.get(idx, {})) if switching else None,
                 speed_mbps=speed if up and speed else None,
                 duplex=(
                     ("full" if p["full_duplex"] else "half")
@@ -658,3 +701,183 @@ def test(cfg: Config) -> str:
         return msg
     finally:
         c.close()
+
+
+# --- changes -----------------------------------------------------------------
+
+# How long apply waits for the switch to report the change (the controller
+# provisions it, and the switch reports its ports every few seconds).
+VERIFY_S = 40
+POLL_S = 3
+
+
+def find(raw: list[dict[str, Any]], key: str) -> dict[str, Any] | None:
+    m = mac(key)
+    return next((d for d in raw if m and mac(d.get("mac")) == m), None)
+
+
+def target(raw: list[dict[str, Any]], key: str, port: str | None) -> tuple[dict[str, Any], int]:
+    """The device and the port_idx of the change, or a PluginError saying why not."""
+    d = find(raw, key)
+    if d is None or d.get("adopted") is False:
+        raise PluginError(f"the controller does not manage the device {key}")
+    name = text(d.get("name")) or key
+    if d.get("type") not in SWITCHING:
+        raise PluginError(f"{name} is not a switch or gateway: its ports cannot be changed")
+    if d.get("state") == DISCONNECTED:
+        raise PluginError(f"{name} is disconnected from the controller: nothing was changed")
+    if not isinstance(d.get("_id"), str):
+        raise PluginError(f"the controller did not give the id of {name}")
+    idx = next((i for i, n in port_names(d).items() if n == port), None)
+    if idx is None:
+        raise PluginError(f"{name} has no port {port}")
+    wan = {text(w.get("ifname")) for _, w in wans(d)}
+    if any(p.get("port_idx") == idx and text(p.get("ifname")) in wan for p in port_entries(d)):
+        raise PluginError(f"{port} of {name} is a WAN port: change it in UniFi Network")
+    return d, idx
+
+
+def port_entries(d: dict[str, Any]) -> list[dict[str, Any]]:
+    return [p for p in d.get("port_table") or [] if isinstance(p, dict)]
+
+
+def port_entry(d: dict[str, Any], idx: int) -> dict[str, Any]:
+    return next((p for p in port_entries(d) if p.get("port_idx") == idx), {})
+
+
+def disabled_profiles(c: Client) -> set[str]:
+    """The ids of the port profiles that disable a port (the built-in
+    "Disabled" one): a port given one of them is disabled too."""
+    missing: list[str] = []
+    profiles = optional("rest/portconf", missing, lambda: c.get("rest/portconf"), [])
+    return {
+        p["_id"] for p in profiles if p.get("forward") == DISABLED and isinstance(p.get("_id"), str)
+    }
+
+
+class Memory:
+    """What a port's override had before Omini disabled it, so enabling puts
+    it back (kept in the state folder; without one, enabling uses defaults)."""
+
+    def __init__(self, cfg: Config):
+        self.file = cfg.state_dir / "disabled-ports.json" if cfg.state_dir else None
+        self.data: dict[str, Any] = {}
+        try:
+            if self.file and self.file.exists():
+                self.data = json.loads(self.file.read_text())
+        except (OSError, ValueError):
+            log.debug("could not read the ports' previous settings")
+
+    def save(self) -> None:
+        if not self.file:
+            return
+        try:
+            self.file.parent.mkdir(parents=True, exist_ok=True)
+            self.file.write_text(json.dumps(self.data))
+        except OSError:
+            log.debug("could not keep the ports' previous settings")
+
+
+def changed_overrides(
+    before: list[dict[str, Any]],
+    idx: int,
+    enabled: bool,
+    profiles: set[str],
+    remembered: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """The device's overrides with only port ``idx`` changed: its ``forward``
+    (and, to enable a port given the "Disabled" profile, that profile). Every
+    other override, and every other field of this one, stay as they are.
+    Also returns what to remember to undo it."""
+    out = [dict(o) for o in before]
+    o = next((x for x in out if x.get("port_idx") == idx), None)
+    if o is None:
+        o = {"port_idx": idx}
+        out.append(o)
+    memo = None
+    if not enabled:
+        memo = {"had": "forward" in o, "forward": o.get("forward")}
+        o["forward"] = DISABLED
+    else:
+        if remembered and remembered.get("forward") != DISABLED:
+            if remembered.get("had"):
+                o["forward"] = remembered.get("forward")
+            else:
+                o.pop("forward", None)
+        elif o.get("forward") == DISABLED:
+            o["forward"] = "all"
+        if o.get("portconf_id") in profiles:
+            o.pop("portconf_id")  # back to the default profile
+    if set(o) == {"port_idx"}:
+        out.remove(o)  # nothing left to override
+    return out, memo
+
+
+def verify(
+    c: Client, key: str, idx: int, enabled: bool, profiles: set[str]
+) -> tuple[bool, str | None]:
+    """Reads the device until the controller shows the override and the switch
+    reports the port so (up to VERIFY_S): (done, why not)."""
+    deadline = time.monotonic() + VERIFY_S
+    while True:
+        try:
+            d = find(c.get("stat/device"), key)
+        except (PluginError, Forbidden, NotFound, ApiError) as e:
+            why = f"the controller did not answer ({e or type(e).__name__})"
+        else:
+            if d is None:
+                return False, "the controller no longer lists the device"
+            stored = configured(overrides(d).get(idx, {}), profiles)
+            if (stored is False) != (not enabled):
+                return False, "the controller did not keep it"
+            reported = port_entry(d, idx).get("enable")
+            if d.get("state") != DISCONNECTED and reported in (enabled, None):
+                return True, None
+            why = f"the switch did not report it within {VERIFY_S} s"
+        if time.monotonic() >= deadline:
+            return False, why
+        time.sleep(POLL_S)
+
+
+def apply(cfg: Config, change: Change) -> list[Device]:
+    """Enables or disables a switch port (port.enabled) through the device's
+    port overrides: only that port's ``forward`` changes (and, to enable a
+    port given the "Disabled" profile, that profile is removed). The
+    controller saves it and provisions the switch; the device is read again
+    until the switch reports the port so, and the change is undone on the
+    controller if it does not. Returns the devices as read after the change."""
+    if change.kind != "port.enabled":
+        raise PluginError(f"this plugin cannot apply {change.kind}")
+    if not isinstance(change.value, bool):
+        raise PluginError(f"port.enabled takes true or false, not {change.value!r}")
+    c = client_from(cfg)
+    try:
+        d, idx = target(c.get("stat/device"), change.device, change.port)
+        profiles = disabled_profiles(c)
+        before = [o for o in d.get("port_overrides") or [] if isinstance(o, dict)]
+        current = admin_enabled(port_entry(d, idx), overrides(d).get(idx, {}), profiles)
+        if current is not change.value:
+            memory = Memory(cfg)
+            slot = f"{mac(d.get('mac'))}/{idx}"
+            after, memo = changed_overrides(
+                before, idx, change.value, profiles, memory.data.get(slot)
+            )
+            endpoint = f"rest/device/{d['_id']}"
+            c.put(endpoint, {"port_overrides": after})
+            done, why = verify(c, change.device, idx, change.value, profiles)
+            if not done:
+                undone = "undone on the controller"
+                try:
+                    c.put(endpoint, {"port_overrides": before})
+                except PluginError as e:
+                    undone = f"not undone ({e}): check the port in UniFi Network"
+                verb = "enable" if change.value else "disable"
+                raise PluginError(f"could not {verb} {change.port}: {why}; the change was {undone}")
+            if memo:
+                memory.data[slot] = memo
+            else:
+                memory.data.pop(slot, None)
+            memory.save()
+    finally:
+        c.close()
+    return collect(cfg)

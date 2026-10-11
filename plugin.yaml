@@ -3,14 +3,17 @@ name: UniFi Network
 version: 0.1.0
 protocol: 1
 entrypoint: main.py
-timeout_s: 60
+timeout_s: 90
 description: >-
   UniFi Network controller (UniFi OS consoles or the self-hosted Network
   Application): every adopted gateway, switch and access point with ports, link
   speed, traffic counters, LLDP and uplinks, Wi-Fi and wired clients, VLANs, WAN
-  status, CPU, memory, temperatures and pending firmware. Read-only.
+  status, CPU, memory, temperatures and pending firmware, and enables or
+  disables switch ports (saved by the controller, checked on the switch).
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-unifi
+changes:
+  - port.enabled
 fields:
   - key: url
     type: url
@@ -24,8 +27,9 @@ fields:
     label: Username
     required: true
     help: >-
-      A local account with the View Only role (not a UI.com / SSO account, no
-      two-factor authentication): see the plugin's README.
+      A local admin whose Network role is Full Management or Site Admin (View
+      Only reads the map but cannot change ports); not a UI.com / SSO account,
+      no two-factor authentication: see the plugin's README.
   - key: password
     type: secret
     label: Password

@@ -56,10 +56,14 @@
       "has_temperature": true,
       "general_temperature": 52,
       "port_table": [
-        {"port_idx": 1, "name": "Port 1", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 1111, "tx_bytes": 2222, "rx_errors": 0, "tx_errors": 1, "is_uplink": false, "poe_enable": true, "port_poe": true, "poe_power": "3.20"},
-        {"port_idx": 2, "name": "Office AP", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 3333, "tx_bytes": 4444, "rx_errors": 0, "tx_errors": 0, "is_uplink": false, "port_poe": true},
-        {"port_idx": 3, "name": "Port 3", "media": "FE", "up": true, "speed": 100, "full_duplex": false, "rx_bytes": 5, "tx_bytes": 6, "rx_errors": 0, "tx_errors": 0, "is_uplink": false},
-        {"port_idx": 17, "name": "SFP 1", "media": "SFP", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 777, "tx_bytes": 888, "rx_errors": 0, "tx_errors": 0, "is_uplink": true, "sfp_found": true, "sfp_vendor": "Ubiquiti Inc.", "sfp_part": "UF-MM-1G", "sfp_serial": "XY987", "sfp_temperature": "38.5", "sfp_voltage": "3.29", "sfp_current": "6.1", "sfp_txpower": "-5.2", "sfp_rxpower": "-6.8"}
+        {"port_idx": 1, "name": "Port 1", "enable": true, "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 1111, "tx_bytes": 2222, "rx_errors": 0, "tx_errors": 1, "is_uplink": false, "poe_enable": true, "port_poe": true, "poe_power": "3.20"},
+        {"port_idx": 2, "name": "Office AP", "enable": true, "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 3333, "tx_bytes": 4444, "rx_errors": 0, "tx_errors": 0, "is_uplink": false, "port_poe": true},
+        {"port_idx": 3, "name": "Port 3", "enable": true, "media": "FE", "up": true, "speed": 100, "full_duplex": false, "rx_bytes": 5, "tx_bytes": 6, "rx_errors": 0, "tx_errors": 0, "is_uplink": false},
+        {"port_idx": 17, "name": "SFP 1", "enable": true, "media": "SFP", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 777, "tx_bytes": 888, "rx_errors": 0, "tx_errors": 0, "is_uplink": true, "sfp_found": true, "sfp_vendor": "Ubiquiti Inc.", "sfp_part": "UF-MM-1G", "sfp_serial": "XY987", "sfp_temperature": "38.5", "sfp_voltage": "3.29", "sfp_current": "6.1", "sfp_txpower": "-5.2", "sfp_rxpower": "-6.8"}
+      ],
+      "port_overrides": [
+        {"port_idx": 2, "name": "Office AP", "poe_mode": "auto", "portconf_id": "6501a1b2c3d4e5f6000000a1"},
+        {"port_idx": 3, "forward": "customize", "native_networkconf_id": "6501a1b2c3d4e5f6000000b1", "tagged_vlan_mgmt": "custom", "excluded_networkconf_ids": ["6501a1b2c3d4e5f6000000b2"], "autoneg": true}
       ],
       "lldp_table": [
         {"chassis_id": "74:ac:b9:00:00:01", "port_id": "eth10", "local_port_idx": 17, "is_wired": true}
