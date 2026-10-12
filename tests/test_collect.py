@@ -114,7 +114,13 @@ def test_vlans_on_the_gateway(unifi, cfg):
         (20, "IOT", "192.168.20.0/24"),
         (30, "Guests", "192.168.30.0/24"),
     ]
-    assert devices["f4:92:bf:00:00:10"].vlans is None
+    # A switch carries every network of the site, the untagged LAN as VLAN 1.
+    assert [(v.id, v.name) for v in devices["f4:92:bf:00:00:10"].vlans] == [
+        (1, "Default"),
+        (20, "IOT"),
+        (30, "Guests"),
+    ]
+    assert devices["78:45:58:00:00:20"].vlans is None
 
 
 def test_lldp_and_uplinks(unifi, cfg):

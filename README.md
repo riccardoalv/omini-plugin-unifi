@@ -1,6 +1,6 @@
 # omini-plugin-unifi
 
-[Omini](https://github.com/riccardoalv/omini) plugin for **UniFi Network**: UniFi OS consoles (Dream Machine, Dream Router, Cloud Gateway, Cloud Key Gen2+...) and the self-hosted UniFi Network Application. Collecting only reads; the one change it makes is enabling or disabling a switch port, when you ask for it in Omini (see [What it changes](#what-it-changes)).
+[Omini](https://github.com/riccardoalv/omini) plugin for **UniFi Network**: UniFi OS consoles (Dream Machine, Dream Router, Cloud Gateway, Cloud Key Gen2+...) and the self-hosted UniFi Network Application. Collecting only reads; it changes the network only when you ask for it in Omini: enabling or disabling a switch port, a switch port's VLANs, the site's VLANs and its Wi-Fi networks (see [What it changes](#what-it-changes)).
 
 > **Experimental.** Built from the API's documentation and the answers its web interface gets; not yet tested on real hardware. Reports of what works (and what does not) are welcome.
 
@@ -23,7 +23,8 @@ One Omini device per **adopted** UniFi device (gateways, switches, access points
 | Wi-Fi clients: AP, network name, band, signal, link rates, current traffic | `stat/sta` | Clients under their AP ("Home · 5 GHz") |
 | Wired clients: switch and port | `stat/sta` (`sw_mac`, `sw_port`) | Clients under their switch port |
 | Client names and IPs | `stat/sta` | Device names |
-| Networks with a VLAN: id, name, subnet | `rest/networkconf` | VLANs of the gateway |
+| Networks with a VLAN: id, name, subnet | `rest/networkconf` | VLANs of the gateway; every switch carries the site's networks (the untagged LAN as VLAN 1) |
+| A switch port's VLANs: untagged (native) and tagged networks | `stat/device` → `port_overrides`, else the port profile (`rest/portconf`), else `port_table` | VLANs of each switch port, and changing them |
 
 Clients, networks and WAN status are optional: if the account cannot read them (or the controller version lacks them), the rest is still collected, and **Test connection** says what is missing.
 
@@ -45,6 +46,28 @@ Paths are under `/proxy/network/api/s/<site>/` on UniFi OS and `/api/s/<site>/` 
 
 `wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it. The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
 
+### VLANs of the switches
+
+A VLAN is a UniFi **network** (`rest/networkconf`): its `vlan` when `vlan_enabled`; the untagged LAN (the "Default" network) is VLAN 1. Networks are the site's, so every UniFi switch lists the same VLANs and a VLAN created from one switch is on all of them. WAN networks are never listed nor changed.
+
+**A port's VLANs** (switches only; gateways' and access points' ports are left out, and so are ports in an aggregate or mirroring) are read from, in order: the port's override, the port profile it uses (`portconf_id`), the switch's port table, else the default (the LAN native, every network tagged):
+
+- `native_networkconf_id`: the untagged network (`""`: none, a trunk with no native VLAN);
+- newer versions: `tagged_vlan_mgmt` `auto` (every network tagged, as Omini shows it), `block_all` (none) or `custom` (every network but `excluded_networkconf_ids`);
+- older versions: `forward` `all` / `native` / `customize` with `tagged_networkconf_ids`.
+
+`port.vlans` (`{"untagged": n|null, "tagged": [...]}`) replaces the port's membership exactly:
+
+1. `GET stat/device`, `GET rest/networkconf` and `GET rest/portconf`; VLANs the site has no network for are refused (create them first).
+2. `PUT rest/device/<_id>` with `{"port_overrides": [...]}`: the device's overrides as they are, with only that port's entry changed: `native_networkconf_id` (the untagged network, or `""`), `tagged_vlan_mgmt` `custom` with `excluded_networkconf_ids` (every other network), or `block_all` for an access port, and `forward: "customize"` (a disabled port stays `disabled`). Every other field of the entry stays, **the port profile included**: the override takes precedence over it. A port whose profile or override uses the older `tagged_networkconf_ids` gets that list too.
+3. The plugin reads `stat/device` again (every 3 seconds, up to 40) until the controller shows the new VLANs and the switch reports them in its port table (when it reports VLANs there); otherwise it sends the overrides as they were (undone) and reports the error.
+
+`vlan.set` (`{"id", "name"}`) renames the VLAN's network (`PUT rest/networkconf/<_id>` with `{"name"}`) or, when the site has none, creates a **VLAN only** network (`POST rest/networkconf` with `{"name", "purpose": "vlan-only", "vlan_enabled": true, "vlan", "enabled": true}`), as the controller's own form does. A VLAN id of a WAN, or a name another network has, is refused.
+
+`vlan.delete` (`{"id"}`) deletes a **VLAN only** network (`DELETE rest/networkconf/<_id>`). Networks with their own gateway (corporate, guest), the WAN's, VLAN 1 and a network a Wi-Fi network still uses are refused with a message; delete those in UniFi Network. After `vlan.set` and `vlan.delete` the plugin reads `rest/networkconf` again until it shows the change.
+
+UniFi switches have no global "VLAN filtering" mode to turn on: every port always follows its networks. These changes need the same role as enabling ports (**Full Management** / **Site Admin**); a **View Only** account gets a message naming it.
+
 ## Requirements
 
 - UniFi Network **7.x to 9.x** — on a UniFi OS console, or the self-hosted UniFi Network Application.
@@ -55,7 +78,7 @@ Paths are under `/proxy/network/api/s/<site>/` on UniFi OS and `/api/s/<site>/` 
 
 Use a dedicated **local** admin for Omini whose role in the **Network** application can change the site's devices: **Full Management** on a UniFi OS console, **Site Admin** on the self-hosted application (called *Administrator* on older versions). See Ubiquiti's [UniFi roles explained](https://help.ui.com/hc/en-us/articles/1500011491541-UniFi-Roles-Explained-Admins-and-Users).
 
-A **View Only** account also works if you only want the map: everything is read, but enabling or disabling a port fails with a message saying which role it needs.
+A **View Only** account also works if you only want the map: everything is read, but every change (ports, VLANs, Wi-Fi) fails with a message saying which role it needs.
 
 **UniFi OS console** (UniFi OS 3.x and later):
 
@@ -84,14 +107,14 @@ Then, in Omini, fill in:
 UniFi's documented API is the official [UniFi Network API](https://developer.ui.com/) (an API key, `/proxy/network/integration/v1/...`). It does not yet expose ports with counters, LLDP, uplinks or client rates, so this plugin uses the **classic API**: the same endpoints the Network application's own web interface reads, stable across versions 7 to 9 and documented by the community ([ubntwiki](https://ubntwiki.com/products/software/unifi-controller/api), [Art-of-WiFi UniFi API client](https://github.com/Art-of-WiFi/UniFi-API-client)).
 
 1. **Which flavor:** `GET /` answers 200 on a UniFi OS console and redirects (to `/manage`) on the self-hosted application. The other flavor is tried if the first login path does not exist.
-2. **Login** (the only POST; the one PUT is the change above): `POST /api/auth/login` on UniFi OS (keeps the `TOKEN` cookie and the `x-csrf-token` header), `POST /api/login` on the self-hosted application (`unifises` and `csrf_token` cookies), with `{"username", "password", "remember": true}`.
+2. **Login** (the only POST besides the changes above): `POST /api/auth/login` on UniFi OS (keeps the `TOKEN` cookie and the `x-csrf-token` header), `POST /api/login` on the self-hosted application (`unifises` and `csrf_token` cookies), with `{"username", "password", "remember": true}`.
 3. **Session:** kept in the plugin's state folder (`session.json`, readable only by Omini; a hash of the credentials, never the password) and reused until the controller answers 401, so there is no login on every collection. After the controller refuses the credentials, the plugin waits 10 minutes before trying again (UniFi OS locks accounts after repeated failures); changing them in Omini retries at once.
 4. **Reads** (GET), under `/proxy/network/api/s/<site>/` on UniFi OS or `/api/s/<site>/` on the self-hosted application:
    - `stat/device` — adopted devices (required)
    - `stat/sta` — connected clients
-   - `rest/networkconf` — networks (read only, never written)
+   - `rest/networkconf` — networks (written only by `vlan.set`, `vlan.delete` and `wifi.set`)
    - `stat/health` — health of each subsystem (WAN status, latency)
-   - `rest/portconf` — port profiles, only when applying a change
+   - `rest/portconf` — port profiles, when a switch port uses one or when applying a change
 
 Mapping notes:
 
@@ -105,7 +128,7 @@ Mapping notes:
 
 - **Not tested on hardware.** Field names come from the controller's answers as documented by the community; a firmware may name or scale something differently. In particular, unverified: the direction of client traffic rates (`tx_bytes-r` as the client's download), SFP readings units (`sfp_txpower`/`sfp_rxpower` taken as dBm, `sfp_current` as mA), the `storage` list of consoles, the LLDP fields beyond `chassis_id`/`port_id`/`local_port_idx`, and the uplink of mesh APs. For changes: the `forward` field of port overrides, the built-in "Disabled" profile of older versions, the port table's `enable` and how long a switch takes to report a change were checked only against Omini's emulated controller, and the role names (Full Management, Site Admin) follow Ubiquiti's documentation.
 - PoE (power per port) is read by UniFi but Omini's data model has no place for it yet.
-- Port VLAN membership (port profiles) is not read.
+- Port VLANs: the newer (`tagged_vlan_mgmt`) and older (`tagged_networkconf_ids`) fields, an override set on top of a port profile, and the port table's VLAN fields were checked only against Omini's emulated controller.
 - Only one site per integration: add the integration again for another site.
 - Clients without an IP are not given a name; Wi-Fi clients of an AP that is not adopted on this site are left out.
 

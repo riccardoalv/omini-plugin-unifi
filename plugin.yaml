@@ -1,6 +1,6 @@
 id: unifi
 name: UniFi Network
-version: 0.2.0
+version: 0.3.0
 protocol: 1
 entrypoint: main.py
 timeout_s: 90
@@ -8,12 +8,17 @@ description: >-
   UniFi Network controller (UniFi OS consoles or the self-hosted Network
   Application): every adopted gateway, switch and access point with ports, link
   speed, traffic counters, LLDP and uplinks, Wi-Fi and wired clients, VLANs, WAN
-  status, CPU, memory, temperatures and pending firmware, and enables or
-  disables switch ports (saved by the controller, checked on the switch).
+  status, CPU, memory, temperatures and pending firmware; enables or disables
+  switch ports, sets a switch port's VLANs, creates, renames and deletes
+  VLAN-only networks and manages Wi-Fi per VLAN (saved by the controller,
+  checked on the switch).
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-unifi
 changes:
   - port.enabled
+  - port.vlans
+  - vlan.set
+  - vlan.delete
   - wifi.set
   - wifi.delete
 fields:
@@ -30,7 +35,7 @@ fields:
     required: true
     help: >-
       A local admin whose Network role is Full Management or Site Admin (View
-      Only reads the map but cannot change ports); not a UI.com / SSO account,
+      Only reads the map but cannot change anything); not a UI.com / SSO account,
       no two-factor authentication: see the plugin's README.
   - key: password
     type: secret

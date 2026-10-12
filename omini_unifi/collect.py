@@ -21,6 +21,7 @@ from omini_sdk import (
     Interface,
     Neighbor,
     PluginError,
+    PortVlans,
     Storage,
     Temperature,
     Transceiver,
@@ -29,6 +30,7 @@ from omini_sdk import (
     log,
 )
 
+from omini_unifi import vlans as vl
 from omini_unifi import wifi as wlan
 from omini_unifi.client import ApiError, Client, Forbidden, NotFound
 
@@ -214,18 +216,30 @@ def admin_enabled(
     return None
 
 
-def ports(d: dict[str, Any], names: dict[int, str]) -> list[Interface]:
+def ports(
+    d: dict[str, Any],
+    names: dict[int, str],
+    networks: list[dict[str, Any]] | None = None,
+    profiles: dict[str, dict[str, Any]] | None = None,
+) -> list[Interface]:
     out: list[Interface] = []
     settings = overrides(d)
     # The state only where Omini can change it (switches and gateways): the
     # map offers enabling and disabling the ports that report it.
     switching = d.get("type") in SWITCHING
+    # VLANs only on switches, and only when the site's networks were read.
+    vlan_ports = d.get("type") == "usw" and bool(networks)
     for i, p in enumerate(d.get("port_table") or []):
         idx = p.get("port_idx")
         name = names.get(idx) if isinstance(idx, int) else None
         name = name or text(p.get("name")) or text(p.get("ifname")) or f"port{i + 1}"
         up = p.get("up") if isinstance(p.get("up"), bool) else None
         speed = count(p.get("speed"))
+        member = (
+            vl.port_vlans(d, idx, networks or [], profiles or {})
+            if vlan_ports and isinstance(idx, int)
+            else None
+        )
         out.append(
             Interface(
                 name=name,
@@ -246,6 +260,7 @@ def ports(d: dict[str, Any], names: dict[int, str]) -> list[Interface]:
                 rx_errors=count(p.get("rx_errors")),
                 tx_errors=count(p.get("tx_errors")),
                 transceiver=transceiver(p),
+                vlans=PortVlans.model_validate(member) if member else None,
             )
         )
     return out
@@ -609,9 +624,10 @@ def device(
     health: dict[str, dict[str, Any]],
     networks: list[dict[str, Any]],
     reached: str | None = None,
+    profiles: dict[str, dict[str, Any]] | None = None,
 ) -> Device:
     names = port_names(d)
-    ifaces = ports(d, names)
+    ifaces = ports(d, names, networks, profiles)
     gateway = d.get("type") in GATEWAYS
     gws = wan_interfaces(d, ifaces, health) if gateway else []
     ifaces += vaps(d)
@@ -649,8 +665,18 @@ def device(
         interfaces=ifaces or None,
         neighbors=neighbors or None,
         gateways=gws or None,
-        vlans=(vlans(networks) or None) if gateway else None,
+        vlans=site_vlans(d, networks),
     )
+
+
+def site_vlans(d: dict[str, Any], networks: list[dict[str, Any]]) -> list[Vlan] | None:
+    """A gateway's VLANs (with their subnets); a switch carries every network
+    of the site, the untagged LAN as VLAN 1."""
+    if d.get("type") in GATEWAYS:
+        return vlans(networks) or None
+    if d.get("type") == "usw":
+        return [Vlan.model_validate(v) for v in vl.site_vlans(networks)] or None
+    return None
 
 
 # --- plugin entry points -----------------------------------------------------
@@ -675,14 +701,31 @@ def site_wifi(c: Client, networks: list[dict], missing: list[str]) -> list[Any]:
     return [WifiNetwork.model_validate(w) for w in wlan.wifi_networks(wlans, networks)]
 
 
+def port_profiles(
+    c: Client, known: dict[str, dict[str, Any]], missing: list[str]
+) -> dict[str, dict[str, Any]]:
+    """The port profiles (rest/portconf), read only when a switch port uses one."""
+    used = any(
+        x.get("portconf_id")
+        for d in known.values()
+        if d.get("type") == "usw"
+        for x in [*(d.get("port_overrides") or []), *(d.get("port_table") or [])]
+        if isinstance(x, dict)
+    )
+    if not used:
+        return {}
+    return vl.profiles_by_id(optional("rest/portconf", missing, lambda: c.get("rest/portconf"), []))
+
+
 def collect(cfg: Config) -> list[Device]:
     c = client_from(cfg)
     try:
         missing: list[str] = []
         raw, stations, networks, health = read_all(c, missing)
         known = adopted(raw)
+        profiles = port_profiles(c, known, missing)
         out = [
-            device(m, d, known, health, networks, urlparse(c.base).hostname)
+            device(m, d, known, health, networks, urlparse(c.base).hostname, profiles)
             for m, d in known.items()
         ]
         wifi, fdb, hosts = clients(stations, known)
@@ -862,6 +905,8 @@ def apply(cfg: Config, change: Change) -> list[Device]:
     controller if it does not. Returns the devices as read after the change."""
     if change.kind in ("wifi.set", "wifi.delete"):
         return apply_wifi(cfg, change)
+    if change.kind in ("port.vlans", "vlan.set", "vlan.delete"):
+        return apply_vlans(cfg, change)
     if change.kind != "port.enabled":
         raise PluginError(f"this plugin cannot apply {change.kind}")
     if not isinstance(change.value, bool):
@@ -912,6 +957,26 @@ def apply_wifi(cfg: Config, change: Change) -> list[Device]:
         else:
             wlan.delete_wifi(c, str(value.get("ssid") or ""))
             wlan.check(c, None, gone=str(value.get("ssid") or ""))
+    finally:
+        c.close()
+    return collect(cfg)
+
+
+def apply_vlans(cfg: Config, change: Change) -> list[Device]:
+    """port.vlans: a switch port's untagged and tagged VLANs (its override's
+    native and tagged networks); vlan.set creates a "VLAN only" network or
+    renames one; vlan.delete deletes a "VLAN only" network. The controller
+    saves it and provisions the switches; the site is read again until it
+    shows the change (a port's change is undone if it does not)."""
+    c = client_from(cfg)
+    try:
+        if change.kind == "port.vlans":
+            d, idx = target(c.get("stat/device"), change.device, change.port)
+            vl.set_port(c, d, idx, str(change.port), change.value)
+        elif change.kind == "vlan.set":
+            vl.set_vlan(c, change.value)
+        else:
+            vl.delete_vlan(c, change.value)
     finally:
         c.close()
     return collect(cfg)

@@ -8,9 +8,11 @@ import pytest
 from omini_sdk import Config
 
 import omini_unifi.collect as collect_module
+import omini_unifi.vlans as vlans_module
 from omini_unifi.client import Client
 
 FIXTURES = Path(__file__).parent / "fixtures"
+VLAN_KEYS = ("native_networkconf_id", "tagged_vlan_mgmt", "excluded_networkconf_ids")
 
 
 class FakeController:
@@ -113,6 +115,11 @@ class FakeController:
                 by_idx = {o["port_idx"]: o for o in d.get("port_overrides") or []}
                 for p in d.get("port_table") or []:
                     o = by_idx.get(p["port_idx"], {})
+                    # A switch that reports its ports' VLANs reports the new ones.
+                    if "native_networkconf_id" in p:
+                        for k in VLAN_KEYS:
+                            if k in o:
+                                p[k] = copy.deepcopy(o[k])
                     p["enable"] = (
                         o.get("forward") != "disabled" and o.get("portconf_id") not in disabled
                     )
@@ -157,6 +164,8 @@ class FakeController:
 def _install(monkeypatch, fake):
     monkeypatch.setattr(collect_module, "VERIFY_S", 0)
     monkeypatch.setattr(collect_module, "POLL_S", 0)
+    monkeypatch.setattr(vlans_module, "VERIFY_S", 0)
+    monkeypatch.setattr(vlans_module, "POLL_S", 0)
     monkeypatch.setattr(
         collect_module, "Client", partial(Client, transport=httpx.MockTransport(fake.handler))
     )
