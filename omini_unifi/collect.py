@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from omini_sdk import (
     Change,
     Config,
+    ConfigBackup,
     Device,
     FdbEntry,
     Firmware,
@@ -21,6 +22,7 @@ from omini_sdk import (
     Interface,
     Neighbor,
     PluginError,
+    PortStp,
     PortVlans,
     Storage,
     Temperature,
@@ -30,6 +32,7 @@ from omini_sdk import (
     log,
 )
 
+from omini_unifi import backup as bk
 from omini_unifi import vlans as vl
 from omini_unifi import wifi as wlan
 from omini_unifi.client import ApiError, Client, Forbidden, NotFound
@@ -57,6 +60,17 @@ DISCONNECTED = 0
 
 BANDS = {"ng": "2.4ghz", "na": "5ghz", "6e": "6ghz"}
 BAND_NAMES = {"2.4ghz": "2.4 GHz", "5ghz": "5 GHz", "6ghz": "6 GHz"}
+
+# port_table "stp_state" → Omini's STP state ("discarding" is RSTP's blocking).
+STP_STATES = {
+    "forwarding": "forwarding",
+    "blocking": "blocking",
+    "discarding": "blocking",
+    "listening": "listening",
+    "learning": "learning",
+    "disabled": "disabled",
+}
+STP_ROLES = {"root", "designated", "alternate", "backup", "disabled"}
 
 # port_table "media" values of copper ports.
 COPPER = {"FE", "GE", "2.5GE", "5GE", "10GE"}
@@ -261,6 +275,77 @@ def ports(
                 tx_errors=count(p.get("tx_errors")),
                 transceiver=transceiver(p),
                 vlans=PortVlans.model_validate(member) if member else None,
+                stp=stp(p) if switching else None,
+            )
+        )
+    return out
+
+
+def stp(p: dict[str, Any]) -> PortStp | None:
+    """The port's spanning tree state (``stp_state``) and, when the switch
+    reports it, its role (``stp_role``)."""
+    state = STP_STATES.get(str(p.get("stp_state") or "").lower())
+    role = str(p.get("stp_role") or "").lower()
+    if not state and role not in STP_ROLES:
+        return None
+    return PortStp(state=state, role=role if role in STP_ROLES else None)
+
+
+def lag_groups(d: dict[str, Any]) -> list[list[int]]:
+    """The device's aggregates (LAGs), each as its ports' port_idx, the first
+    (the one the others are ``aggregated_by``) first. From the port table
+    (``op_mode: "aggregate"``, ``aggregated_by``, ``aggregate_num_ports``)
+    and the port overrides (``op_mode: "aggregate"`` with
+    ``aggregate_num_ports`` or ``aggregate_members``) of the first port."""
+    groups: dict[int, set[int]] = {}
+    table = [p for p in d.get("port_table") or [] if isinstance(p.get("port_idx"), int)]
+    for p in table:
+        by = p.get("aggregated_by")
+        if isinstance(by, int) and not isinstance(by, bool) and by > 0 and by != p["port_idx"]:
+            groups.setdefault(by, {by}).add(p["port_idx"])
+    for p in table:
+        idx = p["port_idx"]
+        if p.get("op_mode") != "aggregate" or any(idx in g for g in groups.values()):
+            continue
+        n = count(p.get("aggregate_num_ports")) or 1
+        groups.setdefault(idx, {idx}).update(range(idx, idx + n))
+    for idx, o in overrides(d).items():
+        followers = {m for first, g in groups.items() for m in g if m != first}
+        if o.get("op_mode") != "aggregate" or idx in followers:
+            continue
+        members = [m for m in o.get("aggregate_members") or [] if isinstance(m, int)]
+        n = count(o.get("aggregate_num_ports"))
+        if members or n:
+            groups.setdefault(idx, {idx}).update(members or range(idx, idx + (n or 1)))
+    return [[first, *sorted(g - {first})] for first, g in sorted(groups.items()) if len(g) > 1]
+
+
+def lag_name(members: list[int]) -> str:
+    """ "LAG 47-48": the ports it aggregates, as UniFi shows an aggregate."""
+    lo, hi = min(members), max(members)
+    return f"LAG {lo}" if lo == hi else f"LAG {lo}-{hi}"
+
+
+def lags(d: dict[str, Any], names: dict[int, str], ifaces: list[Interface]) -> list[Interface]:
+    """Marks each aggregated port with its LAG and returns the LAGs themselves
+    (type "lag"): up when a member is, its speed the sum of the members up."""
+    by_name = {i.name: i for i in ifaces}
+    out = []
+    for members in lag_groups(d):
+        name = lag_name(members)
+        ports_ = [by_name[n] for idx in members if (n := names.get(idx)) and n in by_name]
+        if not ports_:
+            continue
+        for i in ports_:
+            i.lag = name
+        known = [i.up for i in ports_ if i.up is not None]
+        speed = sum(i.speed_mbps or 0 for i in ports_ if i.up)
+        out.append(
+            Interface(
+                name=name,
+                type="lag",
+                up=any(known) if known else None,
+                speed_mbps=speed or None,
             )
         )
     return out
@@ -630,6 +715,8 @@ def device(
     ifaces = ports(d, names, networks, profiles)
     gateway = d.get("type") in GATEWAYS
     gws = wan_interfaces(d, ifaces, health) if gateway else []
+    if d.get("type") in SWITCHING:
+        ifaces += lags(d, names, ifaces)
     ifaces += vaps(d)
     neighbors = lldp(d, names)
     up = uplink(d, names, known, {n.remote_mac for n in neighbors if n.remote_mac})
@@ -980,3 +1067,15 @@ def apply_vlans(cfg: Config, change: Change) -> list[Device]:
     finally:
         c.close()
     return collect(cfg)
+
+
+def backup(cfg: Config) -> list[ConfigBackup]:
+    """Each adopted device's settings as sorted JSON; the site's settings
+    (networks, Wi-Fi networks, port profiles, site settings) go with the
+    gateway, else the switch with the lowest MAC (see backup.py). Secrets are
+    left out."""
+    c = client_from(cfg)
+    try:
+        return bk.backups(c, adopted(c.get("stat/device")))
+    finally:
+        c.close()

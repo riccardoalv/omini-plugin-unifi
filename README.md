@@ -25,6 +25,10 @@ One Omini device per **adopted** UniFi device (gateways, switches, access points
 | Client names and IPs | `stat/sta` | Device names |
 | Networks with a VLAN: id, name, subnet | `rest/networkconf` | VLANs of the gateway; every switch carries the site's networks (the untagged LAN as VLAN 1) |
 | A switch port's VLANs: untagged (native) and tagged networks | `stat/device` → `port_overrides`, else the port profile (`rest/portconf`), else `port_table` | VLANs of each switch port, and changing them |
+| Spanning tree: each switch or gateway port's state (`stp_state`; RSTP's `discarding` is blocking) and, when reported, its role (`stp_role`) | `stat/device` → `port_table` | Standby links (a blocking port) on the map |
+| Aggregates (LAGs): the ports of each one | `stat/device` → `port_table` (`op_mode: "aggregate"`, `aggregated_by`, `aggregate_num_ports`), else `port_overrides` (`op_mode: "aggregate"` with `aggregate_num_ports` or `aggregate_members`) | The cables of a LAG drawn as one link |
+
+**Aggregates.** UniFi does not list a LAG as an interface of its own: the plugin names it after its ports, `LAG 47-48`, marks each member port with it (`lag`) and adds the LAG itself (type `lag`), up when a member is, its speed the sum of the members that are up. **Spanning tree:** UniFi does not say which bridge is the root, so the root bridge (`stp_root`) is not reported. **SFP modules:** UniFi does not report a module's temperature alarm threshold, so Omini's default applies to hot modules.
 
 Clients, networks and WAN status are optional: if the account cannot read them (or the controller version lacks them), the rest is still collected, and **Test connection** says what is missing.
 
@@ -67,6 +71,15 @@ A VLAN is a UniFi **network** (`rest/networkconf`): its `vlan` when `vlan_enable
 `vlan.delete` (`{"id"}`) deletes a **VLAN only** network (`DELETE rest/networkconf/<_id>`). Networks with their own gateway (corporate, guest), the WAN's, VLAN 1 and a network a Wi-Fi network still uses are refused with a message; delete those in UniFi Network. After `vlan.set` and `vlan.delete` the plugin reads `rest/networkconf` again until it shows the change.
 
 UniFi switches have no global "VLAN filtering" mode to turn on: every port always follows its networks. These changes need the same role as enabling ports (**Full Management** / **Site Admin**); a **View Only** account gets a message naming it.
+
+## Configuration backup
+
+Omini keeps a history of each device's configuration (never restored from it). UniFi has no text export of a device, so the plugin's backup is **JSON with sorted keys**, one per adopted device (keyed by its MAC, as on the map), built from what the controller keeps:
+
+- **Each device:** its settings in `stat/device`, only the configuration fields (`name`, `model`, `type`, `mac`, `config_network`, `port_overrides`, `radio_table`, LED, STP, jumbo frame, flow control, 802.1X, SNMP location and contact, management network...), never its live status (uptime, counters, port table, clients, temperatures, firmware).
+- **The site's settings**, in one device's backup only, so that a change to the site is one change: the gateway's, or the switch with the lowest MAC when the gateway is not UniFi (else the device with the lowest MAC). They are the networks (`rest/networkconf`), the Wi-Fi networks (`rest/wlanconf`), the port profiles (`rest/portconf`) and the site settings (`get/setting`, one entry per section). A read the account or the version cannot do is left out.
+
+**Secrets are left out**: every field whose name starts with `x_` (UniFi's mark for secrets: Wi-Fi passphrases, RADIUS secrets, VPN keys, the devices' SSH password...) and any field named like a password, passphrase, secret, pre-shared key or SNMP community (PPSK lists included). Records are sorted (by name, settings by section), so two backups of an unchanged site are equal and differ only when the configuration changed. The backup reads only (the same GET requests as above, plus `rest/wlanconf` and `get/setting`); any role that can read the site (View Only included) can make it. The content is never logged.
 
 ## Requirements
 
@@ -115,6 +128,7 @@ UniFi's documented API is the official [UniFi Network API](https://developer.ui.
    - `rest/networkconf` — networks (written only by `vlan.set`, `vlan.delete` and `wifi.set`)
    - `stat/health` — health of each subsystem (WAN status, latency)
    - `rest/portconf` — port profiles, when a switch port uses one or when applying a change
+   - `rest/wlanconf` — Wi-Fi networks; `get/setting` — the site's settings (backup only)
 
 Mapping notes:
 
@@ -128,6 +142,7 @@ Mapping notes:
 
 - **Not tested on hardware.** Field names come from the controller's answers as documented by the community; a firmware may name or scale something differently. In particular, unverified: the direction of client traffic rates (`tx_bytes-r` as the client's download), SFP readings units (`sfp_txpower`/`sfp_rxpower` taken as dBm, `sfp_current` as mA), the `storage` list of consoles, the LLDP fields beyond `chassis_id`/`port_id`/`local_port_idx`, and the uplink of mesh APs. For changes: the `forward` field of port overrides, the built-in "Disabled" profile of older versions, the port table's `enable` and how long a switch takes to report a change were checked only against Omini's emulated controller, and the role names (Full Management, Site Admin) follow Ubiquiti's documentation.
 - PoE (power per port) is read by UniFi but Omini's data model has no place for it yet.
+- STP, aggregates and backup: `stp_state` values, `stp_role` (if any firmware reports it), the aggregate fields (`aggregated_by`, `aggregate_num_ports`, `aggregate_members`, `op_mode` in overrides), the configuration fields of `stat/device` kept in the backup and the sections of `get/setting` were checked only against Omini's emulated controller.
 - Port VLANs: the newer (`tagged_vlan_mgmt`) and older (`tagged_networkconf_ids`) fields, an override set on top of a port profile, and the port table's VLAN fields were checked only against Omini's emulated controller.
 - Only one site per integration: add the integration again for another site.
 - Clients without an IP are not given a name; Wi-Fi clients of an AP that is not adopted on this site are left out.

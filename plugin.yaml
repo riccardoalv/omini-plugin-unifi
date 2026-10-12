@@ -7,13 +7,15 @@ timeout_s: 90
 description: >-
   UniFi Network controller (UniFi OS consoles or the self-hosted Network
   Application): every adopted gateway, switch and access point with ports, link
-  speed, traffic counters, LLDP and uplinks, Wi-Fi and wired clients, VLANs, WAN
-  status, CPU, memory, temperatures and pending firmware; enables or disables
-  switch ports, sets a switch port's VLANs, creates, renames and deletes
-  VLAN-only networks and manages Wi-Fi per VLAN (saved by the controller,
-  checked on the switch).
+  speed, traffic counters, LLDP and uplinks, spanning tree and aggregates (LAGs),
+  Wi-Fi and wired clients, VLANs, WAN status, CPU, memory, temperatures and
+  pending firmware; backs up each device's and the site's settings (no
+  secrets); enables or disables switch ports, sets a switch port's VLANs,
+  creates, renames and deletes VLAN-only networks and manages Wi-Fi per VLAN
+  (saved by the controller, checked on the switch).
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-unifi
+backup: true
 changes:
   - port.enabled
   - port.vlans
