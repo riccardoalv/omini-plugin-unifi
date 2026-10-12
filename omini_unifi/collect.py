@@ -29,6 +29,7 @@ from omini_sdk import (
     log,
 )
 
+from omini_unifi import wifi as wlan
 from omini_unifi.client import ApiError, Client, Forbidden, NotFound
 
 T = TypeVar("T")
@@ -664,6 +665,16 @@ def read_all(c: Client, missing: list[str]) -> tuple[list[dict], list[dict], lis
     return raw, stations, networks, health
 
 
+def site_wifi(c: Client, networks: list[dict], missing: list[str]) -> list[Any]:
+    """The site's Wi-Fi networks, which every access point of it broadcasts."""
+    if "wifi_networks" not in Device.model_fields:
+        return []
+    from omini_sdk.models import WifiNetwork
+
+    wlans = optional("rest/wlanconf", missing, lambda: c.get("rest/wlanconf"), [])
+    return [WifiNetwork.model_validate(w) for w in wlan.wifi_networks(wlans, networks)]
+
+
 def collect(cfg: Config) -> list[Device]:
     c = client_from(cfg)
     try:
@@ -675,9 +686,12 @@ def collect(cfg: Config) -> list[Device]:
             for m, d in known.items()
         ]
         wifi, fdb, hosts = clients(stations, known)
+        ssids = site_wifi(c, networks, missing)
         for dev in out:
             dev.wireless_clients = wifi.get(dev.key) or None
             dev.fdb = fdb.get(dev.key) or None
+            if dev.role == "ap" and ssids:
+                dev.wifi_networks = ssids
         # Client names go with the gateway (else the first device).
         home = next((d for d in out if d.role == "router"), out[0] if out else None)
         if home and hosts:
@@ -846,6 +860,8 @@ def apply(cfg: Config, change: Change) -> list[Device]:
     controller saves it and provisions the switch; the device is read again
     until the switch reports the port so, and the change is undone on the
     controller if it does not. Returns the devices as read after the change."""
+    if change.kind in ("wifi.set", "wifi.delete"):
+        return apply_wifi(cfg, change)
     if change.kind != "port.enabled":
         raise PluginError(f"this plugin cannot apply {change.kind}")
     if not isinstance(change.value, bool):
@@ -878,6 +894,24 @@ def apply(cfg: Config, change: Change) -> list[Device]:
             else:
                 memory.data.pop(slot, None)
             memory.save()
+    finally:
+        c.close()
+    return collect(cfg)
+
+
+def apply_wifi(cfg: Config, change: Change) -> list[Device]:
+    """wifi.set: a Wi-Fi network of the site (its name, VLAN, password, on or
+    off); wifi.delete removes it. The controller saves it and provisions every
+    access point; the site is read again until it has it as asked."""
+    value = change.value if isinstance(change.value, dict) else {}
+    c = client_from(cfg)
+    try:
+        if change.kind == "wifi.set":
+            wlan.set_wifi(c, value)
+            wlan.check(c, value)
+        else:
+            wlan.delete_wifi(c, str(value.get("ssid") or ""))
+            wlan.check(c, None, gone=str(value.get("ssid") or ""))
     finally:
         c.close()
     return collect(cfg)

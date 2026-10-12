@@ -237,6 +237,20 @@ class Client:
         except Forbidden as e:
             raise PluginError(CHANGE_ROLE) from e
 
+    def post(self, endpoint: str, body: dict[str, Any]) -> list[dict[str, Any]]:
+        """``POST /api/s/<site>/<endpoint>``: something new (a change, as put)."""
+        try:
+            return self._call("POST", endpoint, body)
+        except Forbidden as e:
+            raise PluginError(CHANGE_ROLE) from e
+
+    def delete(self, endpoint: str) -> list[dict[str, Any]]:
+        """``DELETE /api/s/<site>/<endpoint>``: something removed (a change, as put)."""
+        try:
+            return self._call("DELETE", endpoint)
+        except Forbidden as e:
+            raise PluginError(CHANGE_ROLE) from e
+
     def _call(
         self, method: str, endpoint: str, body: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
