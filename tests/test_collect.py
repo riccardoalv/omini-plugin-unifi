@@ -152,8 +152,9 @@ def test_wifi_clients_and_networks(unifi, cfg):
     office = devices["78:45:58:00:00:20"]
     [phone] = office.wireless_clients
     assert phone.mac == "aa:bb:cc:00:00:01"
+    # The VAP the phone is on: the AP's "Home" on 5 GHz.
     assert (phone.interface, phone.ssid, phone.band, phone.signal_dbm) == (
-        "Home · 5 GHz",
+        "wlan1",
         "Home",
         "5ghz",
         -58,
@@ -164,7 +165,14 @@ def test_wifi_clients_and_networks(unifi, cfg):
     wifi = {i.name: i.description for i in office.interfaces if i.type == "wireless"}
     assert wifi == {"wlan0": "Home · 2.4 GHz", "wlan1": "Home · 5 GHz"}
     [plug] = devices["78:45:58:00:00:30"].wireless_clients
-    assert (plug.interface, plug.band, plug.rx_bps) == ("IOT · 2.4 GHz", "2.4ghz", 0)
+    assert (plug.interface, plug.band, plug.rx_bps) == ("wlan0", "2.4ghz", 0)
+
+
+def test_a_wifi_client_on_no_known_vap_has_no_interface(unifi, cfg):
+    ap = next(d for d in unifi.routes["stat/device"]["data"] if d["mac"] == "78:45:58:00:00:30")
+    ap["vap_table"] = []
+    [plug] = by_key(collect(cfg))["78:45:58:00:00:30"].wireless_clients
+    assert (plug.interface, plug.ssid, plug.band) == (None, "IOT", "2.4ghz")
 
 
 def test_wired_clients_in_the_mac_table(unifi, cfg):

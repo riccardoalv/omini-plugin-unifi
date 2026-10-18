@@ -381,6 +381,19 @@ def vaps(d: dict[str, Any]) -> list[Interface]:
     return out
 
 
+def vap_names(d: dict[str, Any]) -> dict[tuple[str, str], str]:
+    """(SSID, radio) → the name of the VAP (wireless interface) broadcasting
+    it; a pair two VAPs share is left out (which one is unknown)."""
+    seen: dict[tuple[str, str], str | None] = {}
+    for v in d.get("vap_table") or []:
+        name, ssid = text(v.get("name")), text(v.get("essid"))
+        if not name or not ssid:
+            continue
+        key = (ssid, str(v.get("radio") or ""))
+        seen[key] = name if key not in seen else None
+    return {k: n for k, n in seen.items() if n}
+
+
 # --- WAN ---------------------------------------------------------------------
 
 
@@ -651,6 +664,7 @@ def clients(
     fdb: dict[str, list[FdbEntry]] = {}
     hosts: list[Host] = []
     names = {m: port_names(d) for m, d in devices.items()}
+    vap = {m: vap_names(d) for m, d in devices.items()}
     for s in stations:
         cm = mac(s.get("mac"))
         if not cm:
@@ -663,7 +677,8 @@ def clients(
                 wifi.setdefault(ap, []).append(
                     WirelessClient(
                         mac=cm,
-                        interface=wifi_label(ssid, band),
+                        # The AP's VAP the client is on (its SSID on its radio).
+                        interface=vap[ap].get((ssid or "", str(s.get("radio") or ""))),
                         ssid=ssid,
                         band=band,
                         signal_dbm=signal(s.get("signal")),

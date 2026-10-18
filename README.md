@@ -20,7 +20,7 @@ One Omini device per **adopted** UniFi device (gateways, switches, access points
 | Wi-Fi networks broadcast by each AP, with counters | `stat/device` → `vap_table` | Wireless interfaces of the AP |
 | WAN ports, their addresses and gateways | `stat/device` → `wan1`, `wan2` | WAN nodes |
 | WAN status and latency | `stat/health` | WAN status dot and latency |
-| Wi-Fi clients: AP, network name, band, signal, link rates, current traffic | `stat/sta` | Clients under their AP ("Home · 5 GHz") |
+| Wi-Fi clients: AP, network name, band, signal, link rates, current traffic | `stat/sta` | Clients under their AP, on the wireless interface (VAP) of their network and band |
 | Wired clients: switch and port | `stat/sta` (`sw_mac`, `sw_port`) | Clients under their switch port |
 | Client names and IPs | `stat/sta` | Device names |
 | Networks with a VLAN: id, name, subnet | `rest/networkconf` | VLANs of the gateway; every switch carries the site's networks (the untagged LAN as VLAN 1) |
