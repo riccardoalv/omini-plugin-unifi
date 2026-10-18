@@ -33,6 +33,7 @@ from omini_sdk import (
 )
 
 from omini_unifi import backup as bk
+from omini_unifi import radios as rd
 from omini_unifi import vlans as vl
 from omini_unifi import wifi as wlan
 from omini_unifi.client import ApiError, Client, Forbidden, NotFound
@@ -788,7 +789,23 @@ def device(
         neighbors=neighbors or None,
         gateways=gws or None,
         vlans=site_vlans(d, networks),
+        **wireless(d),
     )
+
+
+def wireless(d: dict[str, Any]) -> dict[str, Any]:
+    """An access point's radios and whether the device reaches the network
+    over Wi-Fi (a mesh unit); left out on an older SDK without them."""
+    if "radios" not in Device.model_fields:
+        return {}
+    from omini_sdk.models import Radio
+
+    out: dict[str, Any] = {}
+    if d.get("type") == "uap":
+        out["radios"] = [Radio.model_validate(r) for r in rd.radios(d)] or None
+    if d.get("type") not in GATEWAYS:
+        out["wireless_uplink"] = rd.wireless_uplink(d)
+    return out
 
 
 def site_vlans(d: dict[str, Any], networks: list[dict[str, Any]]) -> list[Vlan] | None:

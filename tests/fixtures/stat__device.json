@@ -86,7 +86,14 @@
       "port_table": [
         {"port_idx": 1, "name": "Main", "media": "GE", "up": true, "speed": 1000, "full_duplex": true, "rx_bytes": 4444, "tx_bytes": 3333, "is_uplink": true}
       ],
-      "radio_table": [{"name": "wifi0", "radio": "ng", "channel": 6}, {"name": "wifi1", "radio": "na", "channel": 36}],
+      "radio_table": [
+        {"name": "wifi0", "radio": "ng", "channel": 6, "ht": "20", "tx_power_mode": "auto", "min_rssi_enabled": false},
+        {"name": "wifi1", "radio": "na", "channel": "auto", "ht": "80", "tx_power_mode": "custom", "tx_power": "20", "min_rssi_enabled": false}
+      ],
+      "radio_table_stats": [
+        {"name": "wifi0", "radio": "ng", "channel": 6, "tx_power": 22, "num_sta": 0, "cu_total": 31, "satisfaction": 98},
+        {"name": "wifi1", "radio": "na", "channel": 44, "tx_power": 20, "num_sta": 1, "cu_total": 12, "satisfaction": 99}
+      ],
       "vap_table": [
         {"name": "wlan0", "essid": "Home", "radio": "ng", "bssid": "7a:45:58:00:00:21", "up": true, "num_sta": 0, "rx_bytes": 100, "tx_bytes": 200},
         {"name": "wlan1", "essid": "Home", "radio": "na", "bssid": "7a:45:58:00:00:22", "up": true, "num_sta": 1, "rx_bytes": 300, "tx_bytes": 400}
@@ -106,6 +113,10 @@
       "system-stats": {},
       "vap_table": [
         {"name": "wlan0", "essid": "IOT", "radio": "ng", "up": true}
+      ],
+      "radio_table": [
+        {"name": "wifi0", "radio": "ng", "channel": 11, "ht": 20, "tx_power_mode": "medium"},
+        {"name": "wifi1", "radio": "na", "channel": 44, "ht": 80, "tx_power_mode": "auto"}
       ],
       "uplink": {"type": "wireless", "uplink_mac": "78:45:58:00:00:20", "radio": "na"}
     },

@@ -18,6 +18,8 @@ One Omini device per **adopted** UniFi device (gateways, switches, access points
 | LLDP neighbors | `stat/device` → `lldp_table` | Links between devices |
 | Uplink (the upstream UniFi device and its port, or the access point of a mesh link) | `stat/device` → `uplink` | Each device hangs under the one it is connected to |
 | Wi-Fi networks broadcast by each AP, with counters | `stat/device` → `vap_table` | Wireless interfaces of the AP |
+| Each AP's radios: band (`radio`: `ng`, `na`, `6e`), the channel it is on (`radio_table_stats` → `channel`, else the configured one), whether the controller picks it (`radio_table` → `channel: "auto"`), width (`ht`), transmit power (`radio_table_stats` → `tx_power`, else `tx_power` when `tx_power_mode` is `custom`) | `stat/device` → `radio_table`, `radio_table_stats` | Wi-Fi channel conflicts and their plan |
+| Wireless uplink (a mesh AP: `uplink.type` `wireless`) | `stat/device` → `uplink` | A mesh AP is never moved to another channel |
 | WAN ports, their addresses and gateways | `stat/device` → `wan1`, `wan2` | WAN nodes |
 | WAN status and latency | `stat/health` | WAN status dot and latency |
 | Wi-Fi clients: AP, network name, band, signal, link rates, current traffic | `stat/sta` | Clients under their AP, on the wireless interface (VAP) of their network and band |
@@ -141,6 +143,7 @@ Mapping notes:
 ## Known limitations
 
 - **Not tested on hardware.** Field names come from the controller's answers as documented by the community; a firmware may name or scale something differently. In particular, unverified: the direction of client traffic rates (`tx_bytes-r` as the client's download), SFP readings units (`sfp_txpower`/`sfp_rxpower` taken as dBm, `sfp_current` as mA), the `storage` list of consoles, the LLDP fields beyond `chassis_id`/`port_id`/`local_port_idx`, and the uplink of mesh APs. For changes: the `forward` field of port overrides, the built-in "Disabled" profile of older versions, the port table's `enable` and how long a switch takes to report a change were checked only against Omini's emulated controller, and the role names (Full Management, Site Admin) follow Ubiquiti's documentation.
+- Radios: `radio_table_stats` (live channel and power, taken as dBm), `ht` as the width in MHz and `channel: "auto"` (or `0`) for an automatic channel were checked only against Omini's emulated controller; whether a radio is turned off is not read (left empty).
 - PoE (power per port) is read by UniFi but Omini's data model has no place for it yet.
 - STP, aggregates and backup: `stp_state` values, `stp_role` (if any firmware reports it), the aggregate fields (`aggregated_by`, `aggregate_num_ports`, `aggregate_members`, `op_mode` in overrides), the configuration fields of `stat/device` kept in the backup and the sections of `get/setting` were checked only against Omini's emulated controller.
 - Port VLANs: the newer (`tagged_vlan_mgmt`) and older (`tagged_networkconf_ids`) fields, an override set on top of a port profile, and the port table's VLAN fields were checked only against Omini's emulated controller.
