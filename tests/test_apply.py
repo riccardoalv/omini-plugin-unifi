@@ -163,3 +163,13 @@ def test_access_points_report_no_port_state(unifi, cfg):
     # ports report no state, so the map offers no button there.
     aps = [d for d in collect(cfg) if d.role == "ap"]
     assert aps and all(i.enabled is None for d in aps for i in d.interfaces or [])
+
+
+def test_collect_reads_the_disabled_profile_like_apply(unifi, cfg):
+    # The override gives the "Disabled" profile, though the switch still
+    # reports the port enabled: collect and apply agree it is disabled.
+    overrides(unifi)[0]["portconf_id"] = DISABLED_PROFILE
+    unifi.device(SWITCH_ID)["port_table"][1]["enable"] = True
+    assert ports(collect(cfg))["Office AP"].enabled is False
+    apply(cfg, change("Office AP", False))
+    assert unifi.puts == []  # already disabled: nothing to do

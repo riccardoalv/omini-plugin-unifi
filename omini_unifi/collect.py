@@ -243,6 +243,8 @@ def ports(
     switching = d.get("type") in SWITCHING
     # VLANs only on switches, and only when the site's networks were read.
     vlan_ports = d.get("type") == "usw" and bool(networks)
+    # The "Disabled" port profiles: a port given one is disabled (as apply reads it).
+    disabled = {i for i, x in (profiles or {}).items() if x.get("forward") == DISABLED}
     for i, p in enumerate(d.get("port_table") or []):
         idx = p.get("port_idx")
         name = names.get(idx) if isinstance(idx, int) else None
@@ -261,7 +263,7 @@ def ports(
                 connector=connector(p),
                 mac=mac(p.get("mac")),
                 up=up,
-                enabled=admin_enabled(p, settings.get(idx, {})) if switching else None,
+                enabled=(admin_enabled(p, settings.get(idx, {}), disabled) if switching else None),
                 speed_mbps=speed if up and speed else None,
                 duplex=(
                     ("full" if p["full_duplex"] else "half")
@@ -791,11 +793,12 @@ def site_wifi(c: Client, networks: list[dict], missing: list[str]) -> list[Any]:
 def port_profiles(
     c: Client, known: dict[str, dict[str, Any]], missing: list[str]
 ) -> dict[str, dict[str, Any]]:
-    """The port profiles (rest/portconf), read only when a switch port uses one."""
+    """The port profiles (rest/portconf), read only when a port of a switch or
+    gateway uses one."""
     used = any(
         x.get("portconf_id")
         for d in known.values()
-        if d.get("type") == "usw"
+        if d.get("type") in SWITCHING
         for x in [*(d.get("port_overrides") or []), *(d.get("port_table") or [])]
         if isinstance(x, dict)
     )
