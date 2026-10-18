@@ -11,8 +11,8 @@ description: >-
   Wi-Fi and wired clients, VLANs, WAN status, CPU, memory, temperatures and
   pending firmware; backs up each device's and the site's settings (no
   secrets); enables or disables switch ports, sets a switch port's VLANs,
-  creates, renames and deletes VLAN-only networks and manages Wi-Fi per VLAN
-  (saved by the controller, checked on the switch).
+  creates, renames and deletes VLAN-only networks manages Wi-Fi per VLAN
+  and moves an access point's radio to another channel (saved by the controller, checked on the switch).
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-unifi
 backup: true
@@ -23,6 +23,7 @@ changes:
   - vlan.delete
   - wifi.set
   - wifi.delete
+  - wifi.channel
 fields:
   - key: url
     type: url

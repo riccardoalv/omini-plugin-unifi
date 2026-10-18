@@ -15,7 +15,12 @@ the controller picks it is the configured ``"auto"``."""
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
+
+from omini_sdk import PluginError
+
+from omini_unifi.client import ApiError, Forbidden, NotFound
 
 BANDS = {"ng": "2.4ghz", "na": "5ghz", "6e": "6ghz"}
 WIDTHS = {20, 40, 80, 160, 320}
@@ -105,3 +110,131 @@ def wireless_uplink(d: dict[str, Any]) -> bool | None:
     if kind in ("wire", "wired"):
         return False
     return None
+
+
+# --- wifi.channel ------------------------------------------------------------
+
+# How long the change waits for the access point to report the new channel
+# (the controller provisions it, and the radio restarts on it).
+VERIFY_S = 60
+POLL_S = 3
+
+# The channels each band may be set to (20 MHz primaries).
+CHANNELS = {
+    "2.4ghz": set(range(1, 15)),
+    "5ghz": {*range(36, 65, 4), *range(100, 145, 4), *range(149, 178, 4)},
+    "6ghz": set(range(1, 234, 4)),
+}
+
+
+def wanted(value: Any) -> tuple[str, int]:
+    """The radio's name and the channel asked, or a PluginError."""
+    name = text(value.get("radio")) if isinstance(value, dict) else ""
+    ch = value.get("channel") if isinstance(value, dict) else None
+    if not name:
+        raise PluginError("wifi.channel takes {radio, channel}: the radio is missing")
+    if isinstance(ch, bool) or not isinstance(ch, int):
+        raise PluginError(f"the channel must be a number, not {ch!r}")
+    return name, ch
+
+
+def radio_entry(d: dict[str, Any], name: str) -> dict[str, Any] | None:
+    return next(
+        (
+            r
+            for r in d.get("radio_table") or []
+            if isinstance(r, dict) and text(r.get("name")) == name
+        ),
+        None,
+    )
+
+
+def changed_table(before: list[dict[str, Any]], name: str, channel: int) -> list[dict[str, Any]]:
+    """The radio table with only that radio's channel changed: every other
+    radio, and every other setting of this one, stay as they are."""
+    out = [dict(r) for r in before]
+    for r in out:
+        if text(r.get("name")) == name:
+            r["channel"] = channel
+    return out
+
+
+def live_channel(d: dict[str, Any], name: str) -> int | None:
+    for s in d.get("radio_table_stats") or []:
+        if isinstance(s, dict) and text(s.get("name")) == name:
+            return channel_of(s.get("channel"))
+    return None
+
+
+def has_stats(d: dict[str, Any], name: str) -> bool:
+    return any(
+        isinstance(s, dict) and text(s.get("name")) == name
+        for s in d.get("radio_table_stats") or []
+    )
+
+
+def check(c: Any, find: Any, _id: str, name: str, channel: int) -> tuple[bool, str]:
+    """Reads stat/device until the controller keeps the channel and the
+    radio reports it (when the access point reports its radios): (done, why not)."""
+    deadline = time.monotonic() + VERIFY_S
+    while True:
+        try:
+            d = find(c.get("stat/device"), _id)
+        except (PluginError, Forbidden, NotFound, ApiError) as e:
+            why = f"the controller did not answer ({e or type(e).__name__})"
+        else:
+            if d is None:
+                return False, "the controller no longer lists the access point"
+            if channel_of((radio_entry(d, name) or {}).get("channel")) != channel:
+                return False, "the controller did not keep it"
+            live = live_channel(d, name)
+            if d.get("state") not in (0, None) and (
+                live == channel or (live is None and not has_stats(d, name))
+            ):
+                return True, ""
+            why = f"the radio did not report channel {channel} within {VERIFY_S} s"
+        if time.monotonic() >= deadline:
+            return False, why
+        time.sleep(POLL_S)
+
+
+def set_channel(c: Any, d: dict[str, Any], value: Any, find: Any) -> None:
+    """Moves one radio of access point ``d`` to a channel (wifi.channel):
+    ``PUT rest/device/<_id>`` with its radio table, only that radio's channel
+    changed; the device is read again until the radio is on it, and the
+    change is undone if it is not."""
+    label = text(d.get("name")) or text(d.get("mac"))
+    name, channel = wanted(value)
+    if d.get("type") != "uap":
+        raise PluginError(f"{label} is not an access point: it has no radios to change")
+    if d.get("state") == 0:
+        raise PluginError(f"{label} is disconnected from the controller: nothing was changed")
+    if wireless_uplink(d):
+        raise PluginError(
+            f"{label} reaches the network over Wi-Fi (mesh): a new channel could cut it off, "
+            "so Omini does not move it"
+        )
+    if not isinstance(d.get("_id"), str):
+        raise PluginError(f"the controller did not give the id of {label}")
+    entry = radio_entry(d, name)
+    if entry is None:
+        raise PluginError(f"{label} has no radio {name}")
+    band = BANDS.get(text(entry.get("radio")))
+    if band is None or channel not in CHANNELS[band]:
+        raise PluginError(f"channel {channel} is not a channel of the {name} radio of {label}")
+    if channel_of(entry.get("channel")) == channel:
+        return
+    before = [r for r in d.get("radio_table") or [] if isinstance(r, dict)]
+    endpoint = f"rest/device/{d['_id']}"
+    c.put(endpoint, {"radio_table": changed_table(before, name, channel)})
+    done, why = check(c, find, d["_id"], name, channel)
+    if done:
+        return
+    undone = "undone on the controller"
+    try:
+        c.put(endpoint, {"radio_table": before})
+    except (PluginError, Forbidden, NotFound, ApiError) as e:
+        undone = f"not undone ({e or type(e).__name__}): check the radio in UniFi Network"
+    raise PluginError(
+        f"could not move {name} of {label} to channel {channel}: {why}; the change was {undone}"
+    )

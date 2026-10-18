@@ -1,6 +1,6 @@
 # omini-plugin-unifi
 
-[Omini](https://github.com/riccardoalv/omini) plugin for **UniFi Network**: UniFi OS consoles (Dream Machine, Dream Router, Cloud Gateway, Cloud Key Gen2+...) and the self-hosted UniFi Network Application. Collecting only reads; it changes the network only when you ask for it in Omini: enabling or disabling a switch port, a switch port's VLANs, the site's VLANs and its Wi-Fi networks (see [What it changes](#what-it-changes)).
+[Omini](https://github.com/riccardoalv/omini) plugin for **UniFi Network**: UniFi OS consoles (Dream Machine, Dream Router, Cloud Gateway, Cloud Key Gen2+...) and the self-hosted UniFi Network Application. Collecting only reads; it changes the network only when you ask for it in Omini: enabling or disabling a switch port, a switch port's VLANs, the site's VLANs, its Wi-Fi networks and an access point's channel (see [What it changes](#what-it-changes)).
 
 > **Experimental.** Built from the API's documentation and the answers its web interface gets; not yet tested on real hardware. Reports of what works (and what does not) are welcome.
 
@@ -51,6 +51,16 @@ Paths are under `/proxy/network/api/s/<site>/` on UniFi OS and `/api/s/<site>/` 
 ### Wi-Fi per VLAN
 
 `wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it (up to 40 s); a `wifi.set` it does not show by then is undone (the WLAN's previous name, network and state put back, or the new WLAN deleted; a changed password cannot be put back, the controller never shows it). The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
+
+### Wi-Fi channels
+
+`wifi.channel` (`{"radio", "channel"}`, the radio by its name in `radio_table`, e.g. `wifi0`) moves one radio of an access point to a channel, when Omini resolves a channel conflict between access points:
+
+1. `GET stat/device`; an access point disconnected from the controller, one with a wireless (mesh) uplink, a radio it does not have, or a channel that is not one of the radio's band (2.4 GHz 1-14; 5 GHz 36-64, 100-144, 149-177; 6 GHz 1-233, every 4th) are refused. A radio already on that channel is left alone.
+2. `PUT rest/device/<_id>` with `{"radio_table": [...]}`: the access point's radios as they are, with only that radio's `channel` changed (width, power and every other setting, and the other radios, are sent as they were).
+3. The plugin reads `stat/device` again (every 3 seconds, up to 60) until the controller keeps the channel and the radio reports it (`radio_table_stats` → `channel`; an access point that reports no stats for it is taken at the controller's word). Otherwise it sends the radio table as it was (undone) and reports the error.
+
+The controller saves the change itself. The clients of that radio reconnect for a few seconds. It needs the same role as the other changes.
 
 ### VLANs of the switches
 
@@ -143,6 +153,7 @@ Mapping notes:
 ## Known limitations
 
 - **Not tested on hardware.** Field names come from the controller's answers as documented by the community; a firmware may name or scale something differently. In particular, unverified: the direction of client traffic rates (`tx_bytes-r` as the client's download), SFP readings units (`sfp_txpower`/`sfp_rxpower` taken as dBm, `sfp_current` as mA), the `storage` list of consoles, the LLDP fields beyond `chassis_id`/`port_id`/`local_port_idx`, and the uplink of mesh APs. For changes: the `forward` field of port overrides, the built-in "Disabled" profile of older versions, the port table's `enable` and how long a switch takes to report a change were checked only against Omini's emulated controller, and the role names (Full Management, Site Admin) follow Ubiquiti's documentation.
+- `wifi.channel`: the controller accepting a `radio_table` with only `channel` changed, a channel written as a number, and how long a radio takes to report its new channel were checked only against Omini's emulated controller.
 - Radios: `radio_table_stats` (live channel and power, taken as dBm), `ht` as the width in MHz and `channel: "auto"` (or `0`) for an automatic channel were checked only against Omini's emulated controller; whether a radio is turned off is not read (left empty).
 - PoE (power per port) is read by UniFi but Omini's data model has no place for it yet.
 - STP, aggregates and backup: `stp_state` values, `stp_role` (if any firmware reports it), the aggregate fields (`aggregated_by`, `aggregate_num_ports`, `aggregate_members`, `op_mode` in overrides), the configuration fields of `stat/device` kept in the backup and the sections of `get/setting` were checked only against Omini's emulated controller.

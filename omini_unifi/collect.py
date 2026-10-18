@@ -1047,6 +1047,8 @@ def apply(cfg: Config, change: Change) -> list[Device]:
         return apply_wifi(cfg, change)
     if change.kind in ("port.vlans", "vlan.set", "vlan.delete"):
         return apply_vlans(cfg, change)
+    if change.kind == "wifi.channel":
+        return apply_channel(cfg, change)
     if change.kind != "port.enabled":
         raise PluginError(f"this plugin cannot apply {change.kind}")
     if not isinstance(change.value, bool):
@@ -1098,6 +1100,20 @@ def apply_wifi(cfg: Config, change: Change) -> list[Device]:
         else:
             wlan.delete_wifi(c, str(value.get("ssid") or ""))
             wlan.check(c, None, gone=str(value.get("ssid") or ""))
+    finally:
+        c.close()
+    return collect(cfg)
+
+
+def apply_channel(cfg: Config, change: Change) -> list[Device]:
+    """wifi.channel: one radio of an access point moved to a channel (see
+    radios.set_channel)."""
+    c = client_from(cfg)
+    try:
+        d = find(c.get("stat/device"), change.device)
+        if d is None or d.get("adopted") is False:
+            raise PluginError(f"the controller does not manage the device {change.device}")
+        rd.set_channel(c, d, change.value, vl.find)
     finally:
         c.close()
     return collect(cfg)

@@ -8,6 +8,7 @@ import pytest
 from omini_sdk import Config
 
 import omini_unifi.collect as collect_module
+import omini_unifi.radios as radios_module
 import omini_unifi.vlans as vlans_module
 import omini_unifi.wifi as wifi_module
 from omini_unifi.client import Client
@@ -107,6 +108,12 @@ class FakeController:
         self.puts.append((endpoint, copy.deepcopy(body)))
         if not self.ignore_changes:
             d.update(copy.deepcopy(body))
+            # The access point restarts its radios on the channels it is given.
+            if "radio_table" in body and not self.switch_lags:
+                fixed = {r["name"]: r["channel"] for r in body["radio_table"]}
+                for s in d.get("radio_table_stats") or []:
+                    if isinstance(fixed.get(s["name"]), int):
+                        s["channel"] = fixed[s["name"]]
             if not self.switch_lags:
                 disabled = {
                     p["_id"]
@@ -169,6 +176,8 @@ def _install(monkeypatch, fake):
     monkeypatch.setattr(vlans_module, "POLL_S", 0)
     monkeypatch.setattr(wifi_module, "VERIFY_S", 0)
     monkeypatch.setattr(wifi_module, "POLL_S", 0)
+    monkeypatch.setattr(radios_module, "VERIFY_S", 0)
+    monkeypatch.setattr(radios_module, "POLL_S", 0)
     monkeypatch.setattr(
         collect_module, "Client", partial(Client, transport=httpx.MockTransport(fake.handler))
     )
