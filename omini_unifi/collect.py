@@ -31,6 +31,9 @@ from omini_sdk import (
     WirelessClient,
     log,
 )
+from omini_sdk import optional as sdk_optional
+from omini_sdk.changes import Failed, Pending, apply_verify
+from omini_sdk.http import settings
 
 from omini_unifi import backup as bk
 from omini_unifi import gateway as gw
@@ -96,8 +99,8 @@ def client_from(cfg: Config) -> Client:
         user,
         password,
         site=cfg.str("site", "default"),
-        verify_tls=cfg.bool("verify_tls", False),
         state_dir=cfg.state_dir,
+        **settings(cfg),
     )
 
 
@@ -141,16 +144,17 @@ def text(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+_SKIPPED = object()
+
+
 def optional(what: str, missing: list[str], fn: Callable[[], T], default: T) -> T:
-    """Runs a read that may be unavailable (role, version): skipped, never fatal."""
-    try:
-        return fn()
-    except (Forbidden, NotFound, ApiError) as e:
-        log.info("%s unavailable: %s", what, type(e).__name__)
-    except PluginError as e:
-        log.warning("%s failed: %s", what, e)
-    missing.append(what)
-    return default
+    """Runs a read that may be unavailable (role, version): skipped, never
+    fatal (the SDK's optional), and listed in ``missing``."""
+    out = sdk_optional(what, fn, _SKIPPED)
+    if out is _SKIPPED:
+        missing.append(what)
+        return default
+    return out  # type: ignore[return-value]
 
 
 # --- ports -------------------------------------------------------------------
@@ -1052,30 +1056,19 @@ def changed_overrides(
     return out, memo
 
 
-def verify(
-    c: Client, key: str, idx: int, enabled: bool, profiles: set[str]
-) -> tuple[bool, str | None]:
-    """Reads the device until the controller shows the override and the switch
-    reports the port so (up to VERIFY_S): (done, why not)."""
-    deadline = time.monotonic() + VERIFY_S
-    while True:
-        try:
-            d = find(c.get("stat/device"), key)
-        except (PluginError, Forbidden, NotFound, ApiError) as e:
-            why = f"the controller did not answer ({e or type(e).__name__})"
-        else:
-            if d is None:
-                return False, "the controller no longer lists the device"
-            stored = configured(overrides(d).get(idx, {}), profiles)
-            if (stored is False) != (not enabled):
-                return False, "the controller did not keep it"
-            reported = port_entry(d, idx).get("enable")
-            if d.get("state") != DISCONNECTED and reported in (enabled, None):
-                return True, None
-            why = f"the switch did not report it within {VERIFY_S} s"
-        if time.monotonic() >= deadline:
-            return False, why
-        time.sleep(POLL_S)
+def verify(c: Client, key: str, idx: int, enabled: bool, profiles: set[str]) -> bool:
+    """Whether the controller shows the override and the switch reports the
+    port so; Failed when it will not."""
+    d = find(c.get("stat/device"), key)
+    if d is None:
+        raise Failed("the controller no longer lists the device")
+    stored = configured(overrides(d).get(idx, {}), profiles)
+    if (stored is False) != (not enabled):
+        raise Failed("the controller did not keep it")
+    reported = port_entry(d, idx).get("enable")
+    if d.get("state") != DISCONNECTED and reported in (enabled, None):
+        return True
+    raise Pending(f"the switch did not report it within {VERIFY_S} s")
 
 
 def apply(cfg: Config, change: Change) -> list[Device]:
@@ -1110,16 +1103,18 @@ def apply(cfg: Config, change: Change) -> list[Device]:
                 before, idx, change.value, profiles, memory.data.get(slot)
             )
             endpoint = f"rest/device/{d['_id']}"
-            c.put(endpoint, {"port_overrides": after})
-            done, why = verify(c, change.device, idx, change.value, profiles)
-            if not done:
-                undone = "undone on the controller"
-                try:
-                    c.put(endpoint, {"port_overrides": before})
-                except PluginError as e:
-                    undone = f"not undone ({e}): check the port in UniFi Network"
-                verb = "enable" if change.value else "disable"
-                raise PluginError(f"could not {verb} {change.port}: {why}; the change was {undone}")
+            verb = "enable" if change.value else "disable"
+            apply_verify(
+                lambda: c.put(endpoint, {"port_overrides": after}),
+                lambda: verify(c, change.device, idx, change.value, profiles),
+                lambda: c.put(endpoint, {"port_overrides": before}),
+                timeout=VERIFY_S,
+                interval=POLL_S,
+                message=f"could not {verb} {change.port}",
+                check_in="in UniFi Network",
+                undo_failed_apply=False,  # one PUT: all or nothing
+                sleep=time.sleep,
+            )
             if memo:
                 memory.data[slot] = memo
             else:
@@ -1187,7 +1182,9 @@ def apply_gateway(cfg: Config, change: Change) -> list[Device]:
         except ApiError as e:
             raise PluginError(f"the controller refused the change ({e})") from e
         except NotFound as e:
-            raise PluginError(f"this controller has no {e}: it needs a newer UniFi Network") from e
+            raise PluginError(
+                f"this controller has no {e.resource}: it needs a newer UniFi Network"
+            ) from e
         except Forbidden as e:
             raise PluginError(CHANGE_ROLE) from e
     finally:

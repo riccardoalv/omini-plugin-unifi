@@ -32,11 +32,13 @@ from collections.abc import Callable
 from typing import Any
 
 from omini_sdk import PluginError
+from omini_sdk.changes import Pending, apply_verify
 
 from omini_unifi.client import ApiError, Client, Forbidden, NotFound
 from omini_unifi.wifi import text, vlan_of
 
-VERIFY_S = 40
+# How long a change waits for the controller to show it (the SDK's window).
+VERIFY_S = 30
 POLL_S = 3
 
 MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
@@ -297,37 +299,26 @@ def port_forwards(rows: list[dict[str, Any]], wan_names: dict[str, str]) -> list
 # --- changes -------------------------------------------------------------------
 
 
-def wait(c: Client, done: Callable[[], bool], what: str) -> str | None:
-    """Reads until ``done()`` (up to VERIFY_S), retrying a read that fails
-    meanwhile; None when it was, else why not."""
-    deadline = time.monotonic() + VERIFY_S
-    while True:
-        why = f"the controller did not show {what} within {VERIFY_S} s"
-        try:
-            if done():
-                return None
-        except (PluginError, Forbidden, NotFound, ApiError) as e:
-            why = f"the controller did not answer ({e or type(e).__name__})"
-        if time.monotonic() >= deadline:
-            return why
-        time.sleep(POLL_S)
-
-
 def settle(c: Client, done: Callable[[], bool], what: str, undo: Callable[[], None] | None) -> None:
-    """Waits for the change; one not shown in time is undone (when it can be)
-    and reported."""
-    why = wait(c, done, what)
-    if why is None:
-        return
-    if undo is None:
-        raise PluginError(why)
-    try:
-        undo()
-    except (PluginError, Forbidden, NotFound, ApiError) as e:
-        raise PluginError(
-            f"{why}; the change was not undone ({e or type(e).__name__}): check it in UniFi Network"
-        ) from e
-    raise PluginError(f"{why}; the change was undone on the controller")
+    """Reads until ``done()`` (up to VERIFY_S; a read that fails meanwhile is
+    read again); a change not shown in time is undone (when it can be) and
+    reported."""
+
+    def shown() -> bool:
+        if done():
+            return True
+        raise Pending(f"the controller did not show it within {VERIFY_S} s")
+
+    apply_verify(
+        lambda: None,
+        shown,
+        undo,
+        timeout=VERIFY_S,
+        interval=POLL_S,
+        message=f"could not apply {what}",
+        check_in="in UniFi Network",
+        sleep=time.sleep,
+    )
 
 
 def network_for_ip(rows: list[dict[str, Any]], ip: str) -> dict[str, Any]:

@@ -12,12 +12,14 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from omini_sdk import PluginError, log
+from omini_sdk import PluginError
+from omini_sdk.changes import Pending, apply_verify
 
-from omini_unifi.client import ApiError, Client, Forbidden, NotFound
+from omini_unifi.client import Client, NotFound
 
-# How long a change waits for the controller to show it, as the other changes.
-VERIFY_S = 40
+# How long a change waits for the controller to show it (the SDK's window: the
+# controller shows a site setting as soon as it saves it).
+VERIFY_S = 30
 POLL_S = 3
 
 Undo = Callable[[], None]
@@ -167,33 +169,28 @@ def check(
     """Reads the site again until it has the network as asked (or not at all),
     up to VERIFY_S; a read that fails meanwhile is retried. When it does not,
     the change is undone (``undo``) and a PluginError says so."""
-    deadline = time.monotonic() + VERIFY_S
-    while True:
-        why = "it did not show it"
-        try:
-            nets = wifi_networks(c.get("rest/wlanconf"), c.get("rest/networkconf"))
-        except (PluginError, Forbidden, NotFound, ApiError) as e:
-            why = f"it did not answer ({e or type(e).__name__})"
-        else:
-            if gone is not None and not any(n["ssid"] == gone for n in nets):
-                return
-            if want is not None:
-                n = next((n for n in nets if n["ssid"] == want["ssid"]), None)
-                if (
-                    n
-                    and (want.get("vlan") is None or (n["vlan"] or 1) == int(want["vlan"]))
-                    and (want.get("enabled") is None or n["enabled"] == bool(want["enabled"]))
-                ):
-                    return
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(POLL_S)
-    message = f"the controller did not apply the Wi-Fi change: {why} within {VERIFY_S} s"
-    if undo is None:
-        raise PluginError(message)
-    try:
-        undo()
-    except (PluginError, Forbidden, NotFound, ApiError) as e:
-        log.warning("could not undo the Wi-Fi change: %s", e or type(e).__name__)
-        raise PluginError(f"{message}; the change was not undone: check it in UniFi Network") from e
-    raise PluginError(f"{message}; the change was undone on the controller")
+
+    def shown() -> bool:
+        nets = wifi_networks(c.get("rest/wlanconf"), c.get("rest/networkconf"))
+        if gone is not None and not any(n["ssid"] == gone for n in nets):
+            return True
+        if want is not None:
+            n = next((n for n in nets if n["ssid"] == want["ssid"]), None)
+            if (
+                n
+                and (want.get("vlan") is None or (n["vlan"] or 1) == int(want["vlan"]))
+                and (want.get("enabled") is None or n["enabled"] == bool(want["enabled"]))
+            ):
+                return True
+        raise Pending(f"it did not show it within {VERIFY_S} s")
+
+    apply_verify(
+        lambda: None,
+        shown,
+        undo,
+        timeout=VERIFY_S,
+        interval=POLL_S,
+        message="the controller did not apply the Wi-Fi change",
+        check_in="in UniFi Network",
+        sleep=time.sleep,
+    )

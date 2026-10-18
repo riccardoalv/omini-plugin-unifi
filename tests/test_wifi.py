@@ -135,9 +135,7 @@ def test_deletes_a_wifi(site, cfg):
 def test_a_change_the_controller_does_not_show_is_undone(site, cfg):
     site.wifi_drops = {"enabled"}
     value = {"ssid": "IoT", "previous": "Things", "vlan": 30, "enabled": False}
-    with pytest.raises(
-        PluginError, match=r"did not apply the Wi-Fi change.*undone on the controller"
-    ):
+    with pytest.raises(PluginError, match=r"did not apply the Wi-Fi change.*\(undone\)$"):
         collect_module.apply(cfg, Change(device="x", kind="wifi.set", value=value))
     assert site.sent[-1] == (
         "PUT",
@@ -151,7 +149,7 @@ def test_a_change_the_controller_does_not_show_is_undone(site, cfg):
 def test_a_new_wifi_the_controller_does_not_show_is_deleted(site, cfg):
     site.wifi_drops = {"networkconf_id"}
     value = {"ssid": "Cameras", "vlan": 40, "password": "correct horse"}
-    with pytest.raises(PluginError, match="undone on the controller"):
+    with pytest.raises(PluginError, match=r"\(undone\)$"):
         collect_module.apply(cfg, Change(device="x", kind="wifi.set", value=value))
     assert site.sent[-1] == ("DELETE", "rest/wlanconf/w3", {})
     assert "Cameras" not in aps_wifi(collect_module.collect(cfg))

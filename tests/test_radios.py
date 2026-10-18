@@ -114,7 +114,7 @@ def test_a_radio_already_on_the_channel_is_left_alone(unifi, cfg):
 
 def test_undone_when_the_radio_does_not_report_it(unifi, cfg):
     unifi.switch_lags = True  # the controller keeps it, the radio never moves
-    with pytest.raises(PluginError, match=r"did not report channel 11.*undone on the controller"):
+    with pytest.raises(PluginError, match=r"did not report channel 11.*\(undone\)$"):
         apply(cfg, channel())
     assert len(unifi.puts) == 2
     assert unifi.puts[1][1]["radio_table"][0]["channel"] == 6

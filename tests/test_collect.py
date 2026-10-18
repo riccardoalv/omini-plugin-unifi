@@ -233,6 +233,13 @@ def test_wrong_credentials(unifi, cfg):
     with pytest.raises(PluginError, match="waiting"):
         collect(cfg)
     assert len(unifi.calls) == calls
+    # Kept apart from the session, readable by the owner only.
+    refused = cfg.state_dir / "login-refused.json"
+    assert refused.stat().st_mode & 0o077 == 0 and "wrong" not in refused.read_text()
+    # The right password is tried at once, and clears the wait.
+    cfg["password"] = "s3cret"
+    assert len(collect(cfg)) == 4
+    assert not refused.exists()
 
 
 def test_wrong_credentials_self_hosted(classic, cfg):

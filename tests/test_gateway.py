@@ -272,7 +272,7 @@ def test_fixes_the_address_of_a_client_never_seen(site, cfg):
 
 def test_a_reservation_not_kept_is_undone(site, cfg):
     site.ignore = True
-    with pytest.raises(PluginError, match="undone on the controller"):
+    with pytest.raises(PluginError, match=r"\(undone\)$"):
         apply(cfg, change("reservation.set", mac="aa:bb:cc:00:00:01", ip="192.168.1.50"))
     assert site.sent[-1] == ("PUT", "rest/user/u101", {"use_fixedip": False})
 
@@ -398,7 +398,7 @@ def test_a_changed_network_not_kept_is_put_back(site, cfg):
     site.routes["rest/networkconf"]["data"][1]["dhcpd_enabled"] = True
     original = dict(site.routes["rest/networkconf"]["data"][1])
     site.ignore = True
-    with pytest.raises(PluginError, match="undone on the controller"):
+    with pytest.raises(PluginError, match=r"\(undone\)$"):
         apply(cfg, change("network.set", vlan=20, gateway="192.168.21.1/24"))
     assert site.sent[-1] == (
         "PUT",

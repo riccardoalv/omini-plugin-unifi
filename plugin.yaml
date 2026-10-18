@@ -67,4 +67,11 @@ fields:
     type: bool
     label: Verify the TLS certificate
     default: false
+    group: Advanced
     help: UniFi uses a self-signed certificate by default; turn this on if yours is trusted.
+  - key: timeout_s
+    type: int
+    label: Timeout (seconds)
+    default: 15
+    group: Advanced
+    help: How long to wait for each answer of the controller.

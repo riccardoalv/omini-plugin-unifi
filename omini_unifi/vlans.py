@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 from omini_sdk import PluginError
+from omini_sdk.changes import Failed, Pending, apply_verify
 
 from omini_unifi.client import ApiError, Client, Forbidden, NotFound
 from omini_unifi.wifi import text, vlan_of
@@ -212,29 +213,20 @@ def find(raw: list[dict[str, Any]], _id: str) -> dict[str, Any] | None:
 
 def verify_port(
     c: Client, _id: str, idx: int, want: dict[str, Any], profiles: dict[str, dict[str, Any]]
-) -> tuple[bool, str | None]:
-    """Reads the device until the controller keeps the port's VLANs and the
-    switch reports them (when its port table has them): (done, why not)."""
-    deadline = time.monotonic() + VERIFY_S
-    while True:
-        try:
-            d = find(c.get("stat/device"), _id)
-            networks = c.get("rest/networkconf")
-        except (PluginError, Forbidden, NotFound, ApiError) as e:
-            why = f"the controller did not answer ({e or type(e).__name__})"
-        else:
-            if d is None:
-                return False, "the controller no longer lists the device"
-            if port_vlans(d, idx, networks, profiles) != want:
-                return False, "the controller did not keep it"
-            entry = next((p for p in d.get("port_table") or [] if p.get("port_idx") == idx), {})
-            seen = reported(entry, site_networks(networks))
-            if d.get("state") != 0 and seen in (want, None):
-                return True, None
-            why = f"the switch did not report it within {VERIFY_S} s"
-        if time.monotonic() >= deadline:
-            return False, why
-        time.sleep(POLL_S)
+) -> bool:
+    """Whether the controller keeps the port's VLANs and the switch reports
+    them (when its port table has them); Failed when it will not."""
+    d = find(c.get("stat/device"), _id)
+    networks = c.get("rest/networkconf")
+    if d is None:
+        raise Failed("the controller no longer lists the device")
+    if port_vlans(d, idx, networks, profiles) != want:
+        raise Failed("the controller did not keep it")
+    entry = next((p for p in d.get("port_table") or [] if p.get("port_idx") == idx), {})
+    seen = reported(entry, site_networks(networks))
+    if d.get("state") != 0 and seen in (want, None):
+        return True
+    raise Pending(f"the switch did not report it within {VERIFY_S} s")
 
 
 def set_port(c: Client, d: dict[str, Any], idx: int, port: str, value: Any) -> None:
@@ -264,15 +256,17 @@ def set_port(c: Client, d: dict[str, Any], idx: int, port: str, value: Any) -> N
     )
     after = changed_overrides(before, idx, want, ids, old_style)
     endpoint = f"rest/device/{d['_id']}"
-    c.put(endpoint, {"port_overrides": after})
-    done, why = verify_port(c, d["_id"], idx, want, profiles)
-    if not done:
-        undone = "undone on the controller"
-        try:
-            c.put(endpoint, {"port_overrides": before})
-        except PluginError as e:
-            undone = f"not undone ({e}): check the port in UniFi Network"
-        raise PluginError(f"could not change the VLANs of {port}: {why}; the change was {undone}")
+    apply_verify(
+        lambda: c.put(endpoint, {"port_overrides": after}),
+        lambda: verify_port(c, d["_id"], idx, want, profiles),
+        lambda: c.put(endpoint, {"port_overrides": before}),
+        timeout=VERIFY_S,
+        interval=POLL_S,
+        message=f"could not change the VLANs of {port}",
+        check_in="in UniFi Network",
+        undo_failed_apply=False,  # one PUT: all or nothing
+        sleep=time.sleep,
+    )
 
 
 # --- vlan.set / vlan.delete -----------------------------------------------------
@@ -362,14 +356,11 @@ def delete_vlan(c: Client, value: Any) -> None:
 def check(c: Client, done: Any) -> None:
     """Reads the site's networks until ``done(networks)`` (up to VERIFY_S); a
     read that fails meanwhile (the controller busy provisioning) is retried."""
-    deadline = time.monotonic() + VERIFY_S
-    while True:
-        why = ""
-        try:
-            if done(c.get("rest/networkconf")):
-                return
-        except (PluginError, Forbidden, NotFound, ApiError) as e:
-            why = f" (it did not answer: {e or type(e).__name__})"
-        if time.monotonic() >= deadline:
-            raise PluginError(f"the controller did not apply the VLAN change{why}")
-        time.sleep(POLL_S)
+    apply_verify(
+        lambda: None,
+        lambda: done(c.get("rest/networkconf")),
+        timeout=VERIFY_S,
+        interval=POLL_S,
+        message="the controller did not apply the VLAN change",
+        sleep=time.sleep,
+    )

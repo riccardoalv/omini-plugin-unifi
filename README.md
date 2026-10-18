@@ -56,11 +56,11 @@ Paths are under `/proxy/network/api/s/<site>/` on UniFi OS and `/api/s/<site>/` 
 
 ### Wi-Fi per VLAN
 
-`wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it (up to 40 s); a `wifi.set` it does not show by then is undone (the WLAN's previous name, network and state put back, or the new WLAN deleted; a changed password cannot be put back, the controller never shows it). The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
+`wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it (up to 30 s); a `wifi.set` it does not show by then is undone (the WLAN's previous name, network and state put back, or the new WLAN deleted; a changed password cannot be put back, the controller never shows it). The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
 
 ### The gateway: networks, fixed addresses, DNS names, pause
 
-With a UniFi gateway (UDM, UDR, UCG, USG, UXG) on the site, its device in Omini takes these changes; on a site without one they are refused (the router is another device). Each is read back (every 3 seconds, up to 40) until the controller shows it, and one it does not show is undone where it can be.
+With a UniFi gateway (UDM, UDR, UCG, USG, UXG) on the site, its device in Omini takes these changes; on a site without one they are refused (the router is another device). Each is read back (every 3 seconds, up to 30) until the controller shows it, and one it does not show is undone where it can be.
 
 - **`network.set`** (`{vlan, name, gateway, dhcp, access}`): the VLAN's **corporate** network. A new one is `POST rest/networkconf` with `{"name", "ip_subnet": "<gateway>/<prefix>", "dhcpd_enabled", "dhcpd_start", "dhcpd_stop", "purpose": "corporate", "networkgroup": "LAN", "vlan_enabled": true, "vlan", "enabled": true}` (deleted if not shown); an existing one, or a **VLAN only** network of that VLAN (given the gateway; its ports and Wi-Fi stay), is `PUT rest/networkconf/<_id>` with only those fields (put back if not shown). VLAN 1 is the Default LAN and keeps its name. **Access**: Internet only is `internet_access_enabled: true` with `network_isolation_enabled: true`, Whole network `true`/`false`, No internet `false`/`true`; a controller without those fields refuses an access choice (create the network without one and set it in UniFi Network), and `custom` leaves them as they are. Discovery between networks (mDNS) is not set from Omini. Guest networks and a WAN's VLAN are refused.
 - **`network.delete`** (`{vlan}`): `DELETE rest/networkconf/<_id>` of a corporate network; VLAN 1 and a network a Wi-Fi network still uses are refused.
@@ -141,7 +141,8 @@ Then, in Omini, fill in:
 | Address | The console (`https://192.168.1.1`) or the application (`https://controller:8443`) |
 | Username / Password | The account above |
 | Site | The site's internal name: the part after `/manage/` in the Network application's address (`default` for the first site; other sites have short ids like `x8k2m1ab`) |
-| Verify the TLS certificate | Off by default: UniFi uses a self-signed certificate |
+| Verify the TLS certificate (Advanced) | Off by default: UniFi uses a self-signed certificate |
+| Timeout (Advanced) | Seconds to wait for each answer of the controller (15 by default); a refused connection or a busy controller is asked again |
 
 ## How it works
 
@@ -149,7 +150,7 @@ UniFi's documented API is the official [UniFi Network API](https://developer.ui.
 
 1. **Which flavor:** `GET /` answers 200 on a UniFi OS console and redirects (to `/manage`) on the self-hosted application. The other flavor is tried if the first login path does not exist.
 2. **Login** (the only POST besides the changes above): `POST /api/auth/login` on UniFi OS (keeps the `TOKEN` cookie and the `x-csrf-token` header), `POST /api/login` on the self-hosted application (`unifises` and `csrf_token` cookies), with `{"username", "password", "remember": true}`.
-3. **Session:** kept in the plugin's state folder (`session.json`, readable only by Omini; a hash of the credentials, never the password) and reused until the controller answers 401, so there is no login on every collection. After the controller refuses the credentials, the plugin waits 10 minutes before trying again (UniFi OS locks accounts after repeated failures); changing them in Omini retries at once.
+3. **Session:** kept in the plugin's state folder (`session.json`, readable only by Omini; a hash of the credentials, never the password; refused credentials in `login-refused.json`) and reused until the controller answers 401, so there is no login on every collection. After the controller refuses the credentials, the plugin waits 10 minutes before trying again (UniFi OS locks accounts after repeated failures); changing them in Omini retries at once.
 4. **Reads** (GET), under `/proxy/network/api/s/<site>/` on UniFi OS or `/api/s/<site>/` on the self-hosted application:
    - `stat/device` — adopted devices (required)
    - `stat/sta` — connected clients

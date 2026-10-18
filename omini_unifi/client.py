@@ -13,23 +13,25 @@ next to ``/api`` (behind ``/proxy/network`` on UniFi OS) and answer plain JSON.
 
 The flavor is detected once (``GET /`` answers 200 on UniFi OS, a redirect to
 ``/manage`` on the self-hosted application) and the session (flavor, cookies and
-CSRF token) is kept in the plugin's state folder, so the controller does not see
-a new login on every collection. Collecting sends only GET requests, besides
-the login; ``put`` (a device's settings) is called only by ``apply``.
+CSRF token) is kept in the plugin's state folder (the SDK's ``Session``), so the
+controller does not see a new login on every collection; refused credentials
+wait 10 minutes (``LoginBackoff``). Collecting sends only GET requests, besides
+the login; ``put`` (a device's settings) is called only by ``apply``. Timeouts,
+retries and the errors come from the SDK's HTTP client.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import os
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from omini_sdk import PluginError, log
+from omini_sdk import PluginError
+from omini_sdk.http import Client as HttpClient
+from omini_sdk.http import Forbidden, HttpError, LoginBackoff, NotFound, Session
+
+__all__ = ["CHANGE_ROLE", "ApiError", "Client", "Forbidden", "NotFound"]
 
 UNIFI_OS = "unifi_os"
 CLASSIC = "classic"
@@ -47,15 +49,7 @@ CHANGE_ROLE = (
 )
 
 
-class Forbidden(Exception):
-    """The account's role cannot read this endpoint."""
-
-
-class NotFound(Exception):
-    """The endpoint does not exist on this controller version."""
-
-
-class ApiError(Exception):
+class ApiError(HttpError):
     """The controller answered with ``meta.rc = "error"``."""
 
 
@@ -67,7 +61,7 @@ class _WrongFlavor(Exception):
     pass
 
 
-class Client:
+class Client(HttpClient):
     def __init__(
         self,
         url: str,
@@ -76,69 +70,41 @@ class Client:
         site: str = "default",
         verify_tls: bool = False,
         state_dir: Path | None = None,
-        timeout: float = 10,
+        timeout: float = 15,
         transport: httpx.BaseTransport | None = None,
     ):
-        url = url.strip().rstrip("/")
-        if not url.startswith(("https://", "http://")):
-            url = "https://" + url
-        self.base = url
+        super().__init__(
+            url,
+            name="the controller",
+            verify_tls=verify_tls,
+            timeout=timeout,
+            user_agent="omini-plugin-unifi",
+            transport=transport,
+        )
         self.site = site.strip() or "default"
         self.username = username
         self.password = password
-        self.state_dir = state_dir
-        self.fingerprint = _fingerprint(url, username, password)
-        self.http = httpx.Client(
-            base_url=url,
-            verify=verify_tls,
-            timeout=timeout,
-            headers={"Accept": "application/json", "User-Agent": "omini-plugin-unifi"},
-            transport=transport,
-        )
+        self.session = Session(state_dir, self.base, username, password)
+        # After the controller refuses these credentials, wait before signing
+        # in again: UniFi OS locks an account out after repeated failed logins.
+        self.backoff_login = LoginBackoff(state_dir, self.base, username, password, minutes=10)
         self.flavor: str | None = None
         self.csrf: str | None = None
-        saved = self._load()
-        if saved.get("for") == self.fingerprint and saved.get("flavor") in PREFIXES:
+        saved = self.session.load()
+        if saved.get("flavor") in PREFIXES:
             self.flavor = saved["flavor"]
             self.csrf = saved.get("csrf")
             for name, value in (saved.get("cookies") or {}).items():
                 self.http.cookies.set(name, value)
         self.logins = 0
 
-    def close(self) -> None:
-        self.http.close()
-
     @property
     def kind(self) -> str:
         return NAMES.get(self.flavor or "", "UniFi")
 
-    # --- state ------------------------------------------------------------------
-
-    def _state_file(self) -> Path | None:
-        return self.state_dir / "session.json" if self.state_dir else None
-
-    def _load(self) -> dict[str, Any]:
-        f = self._state_file()
-        try:
-            return json.loads(f.read_text()) if f and f.exists() else {}
-        except (OSError, ValueError):
-            return {}
-
-    def _write(self, data: dict[str, Any]) -> None:
-        f = self._state_file()
-        if not f:
-            return
-        try:
-            f.parent.mkdir(parents=True, exist_ok=True)
-            f.write_text(json.dumps(data))
-            os.chmod(f, 0o600)
-        except OSError:
-            log.debug("could not save the session")
-
     def _save(self) -> None:
-        self._write(
+        self.session.save(
             {
-                "for": self.fingerprint,
                 "flavor": self.flavor,
                 "csrf": self.csrf,
                 "cookies": {c.name: c.value for c in self.http.cookies.jar},
@@ -147,19 +113,8 @@ class Client:
 
     # --- login ------------------------------------------------------------------
 
-    # After the controller refuses these credentials, wait before signing in
-    # again: UniFi OS locks an account out after repeated failed logins.
-    LOGIN_BACKOFF_S = 10 * 60
-
     def _send(self, method: str, path: str, **kw: Any) -> httpx.Response:
-        try:
-            return self.http.request(method, path, **kw)
-        except httpx.ConnectError as e:
-            raise PluginError(f"cannot connect to {self.base}: {e}") from e
-        except httpx.TimeoutException as e:
-            raise PluginError(f"{self.base} did not answer in time") from e
-        except httpx.HTTPError as e:
-            raise PluginError(f"request to {self.base} failed: {e}") from e
+        return self.send(method, path, **kw)
 
     def _detect(self) -> list[str]:
         """Flavors to try, the likely one first."""
@@ -167,15 +122,7 @@ class Client:
         return [UNIFI_OS, CLASSIC] if r.status_code == 200 else [CLASSIC, UNIFI_OS]
 
     def login(self) -> None:
-        saved = self._load()
-        refused = saved.get("refused") or {}
-        if (
-            refused.get("for") == self.fingerprint
-            and time.time() - refused.get("at", 0) < self.LOGIN_BACKOFF_S
-        ):
-            raise PluginError(
-                f"{refused.get('error')} (waiting a few minutes before signing in again)"
-            )
+        self.backoff_login.check()
         self.http.cookies.clear()
         self.csrf = None
         flavors = [self.flavor] if self.flavor else self._detect()
@@ -186,12 +133,11 @@ class Client:
                 continue
             except PluginError as e:
                 if getattr(e, "refused", False):
-                    self._write(
-                        {"refused": {"for": self.fingerprint, "at": time.time(), "error": str(e)}}
-                    )
+                    self.backoff_login.refused(str(e))
                 raise
             self.flavor = flavor
             self.logins += 1
+            self.backoff_login.clear()
             self._save()
             return
         if self.flavor:  # a saved flavor that no longer answers: detect again
@@ -296,9 +242,9 @@ class Client:
         if r.status_code == 401:
             raise _LoginRequired
         if r.status_code == 403:
-            raise Forbidden(endpoint)
+            raise Forbidden(resource=endpoint, method=method)
         if r.status_code == 404:
-            raise NotFound(endpoint)
+            raise NotFound(f"the controller has no {endpoint}", status=404, resource=endpoint)
         try:
             answer = r.json() if r.content else None
         except ValueError as e:
@@ -307,7 +253,12 @@ class Client:
             msg = ""
             if isinstance(answer, dict):
                 msg = str(answer.get("message") or answer.get("code") or "")
-            raise ApiError(f"{endpoint}: {msg or f'HTTP {r.status_code}'}")
+            raise ApiError(
+                f"{endpoint}: {msg or f'HTTP {r.status_code}'}",
+                status=r.status_code,
+                method=method,
+                resource=endpoint,
+            )
         return answer
 
     def _request(
@@ -324,23 +275,25 @@ class Client:
         if msg == "api.err.NoSiteContext":
             raise PluginError(f'there is no site "{self.site}" on this controller')
         if r.status_code == 403 or msg == "api.err.NoPermission":
-            raise Forbidden(endpoint)
+            raise Forbidden(resource=endpoint, method=method)
         if r.status_code == 404:
             if self.flavor == UNIFI_OS and "stat/device" in endpoint:
                 raise PluginError(
                     "the console answered, but not its Network application: is it installed?"
                 )
-            raise NotFound(endpoint)
+            raise NotFound(f"the controller has no {endpoint}", status=404, resource=endpoint)
         try:
             answer = r.json()
         except ValueError as e:
             raise PluginError(f"{self.base} did not answer {endpoint} with JSON") from e
         if not isinstance(answer, dict):
-            raise ApiError(endpoint)
+            raise ApiError(endpoint, resource=endpoint)
         if (answer.get("meta") or {}).get("rc") == "error":
-            raise ApiError(f"{endpoint}: {msg}")
+            raise ApiError(f"{endpoint}: {msg}", status=r.status_code, resource=endpoint)
         if r.status_code >= 400:
-            raise ApiError(f"{endpoint}: HTTP {r.status_code}")
+            raise ApiError(
+                f"{endpoint}: HTTP {r.status_code}", status=r.status_code, resource=endpoint
+            )
         data = answer.get("data")
         return [x for x in data if isinstance(x, dict)] if isinstance(data, list) else []
 
@@ -357,7 +310,3 @@ def _refused(message: str) -> PluginError:
     e = PluginError(message)
     e.refused = True  # type: ignore[attr-defined]
     return e
-
-
-def _fingerprint(url: str, username: str, password: str) -> str:
-    return hashlib.sha256(f"{url}\0{username}\0{password}".encode()).hexdigest()

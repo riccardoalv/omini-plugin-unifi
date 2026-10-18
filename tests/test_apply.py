@@ -106,7 +106,7 @@ def test_nothing_is_sent_when_the_port_is_already_so(unifi, cfg):
 
 def test_undone_when_the_controller_does_not_keep_it(unifi, cfg):
     unifi.ignore_changes = True
-    with pytest.raises(PluginError, match="did not keep it; the change was undone"):
+    with pytest.raises(PluginError, match=r"did not keep it \(undone\)"):
         apply(cfg, change())
     assert unifi.puts[-1][1] == {"port_overrides": [OFFICE_AP, PORT_3]}
 
@@ -173,3 +173,33 @@ def test_collect_reads_the_disabled_profile_like_apply(unifi, cfg):
     assert ports(collect(cfg))["Office AP"].enabled is False
     apply(cfg, change("Office AP", False))
     assert unifi.puts == []  # already disabled: nothing to do
+
+
+def test_an_undo_that_fails_says_where_to_check(unifi, cfg, monkeypatch):
+    from omini_unifi.client import Client
+
+    unifi.switch_lags = True
+    real_put = Client.put
+    puts = []
+
+    def put(self, endpoint, body):
+        puts.append(body)
+        if len(puts) > 1:
+            raise PluginError("the controller is gone")
+        return real_put(self, endpoint, body)
+
+    monkeypatch.setattr(Client, "put", put)
+    with pytest.raises(PluginError, match=r"\(could not be undone: check it in UniFi Network\)$"):
+        apply(cfg, change())
+
+
+def test_a_refused_change_is_not_undone(unifi, cfg, monkeypatch):
+    from omini_unifi.client import CHANGE_ROLE, Client
+
+    def put(self, endpoint, body):
+        raise PluginError(CHANGE_ROLE)
+
+    monkeypatch.setattr(Client, "put", put)
+    with pytest.raises(PluginError) as e:
+        apply(cfg, change())
+    assert str(e.value) == CHANGE_ROLE  # nothing was changed, nothing to undo

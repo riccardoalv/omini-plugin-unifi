@@ -220,16 +220,14 @@ def test_undone_when_the_switch_does_not_report_it(site, cfg):
     switch(site)["port_table"][0].update(native_networkconf_id="n1", tagged_vlan_mgmt="auto")
     site.switch_lags = True
     before = copy.deepcopy(switch(site)["port_overrides"])
-    with pytest.raises(
-        PluginError, match="switch did not report it within 0 s; the change was undone"
-    ):
+    with pytest.raises(PluginError, match=r"switch did not report it within 0 s \(undone\)"):
         apply(cfg, port_change("Port 1", 20))
     assert site.puts[-1][1] == {"port_overrides": before}
 
 
 def test_undone_when_the_controller_does_not_keep_it(site, cfg):
     site.ignore_changes = True
-    with pytest.raises(PluginError, match="did not keep it; the change was undone"):
+    with pytest.raises(PluginError, match=r"did not keep it \(undone\)"):
         apply(cfg, port_change("Port 1", 20))
     assert len(site.puts) == 2
 

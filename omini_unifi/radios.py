@@ -19,8 +19,7 @@ import time
 from typing import Any
 
 from omini_sdk import PluginError
-
-from omini_unifi.client import ApiError, Forbidden, NotFound
+from omini_sdk.changes import Failed, Pending, apply_verify
 
 BANDS = {"ng": "2.4ghz", "na": "5ghz", "6e": "6ghz"}
 WIDTHS = {20, 40, 80, 160, 320}
@@ -173,29 +172,20 @@ def has_stats(d: dict[str, Any], name: str) -> bool:
     )
 
 
-def check(c: Any, find: Any, _id: str, name: str, channel: int) -> tuple[bool, str]:
-    """Reads stat/device until the controller keeps the channel and the
-    radio reports it (when the access point reports its radios): (done, why not)."""
-    deadline = time.monotonic() + VERIFY_S
-    while True:
-        try:
-            d = find(c.get("stat/device"), _id)
-        except (PluginError, Forbidden, NotFound, ApiError) as e:
-            why = f"the controller did not answer ({e or type(e).__name__})"
-        else:
-            if d is None:
-                return False, "the controller no longer lists the access point"
-            if channel_of((radio_entry(d, name) or {}).get("channel")) != channel:
-                return False, "the controller did not keep it"
-            live = live_channel(d, name)
-            if d.get("state") not in (0, None) and (
-                live == channel or (live is None and not has_stats(d, name))
-            ):
-                return True, ""
-            why = f"the radio did not report channel {channel} within {VERIFY_S} s"
-        if time.monotonic() >= deadline:
-            return False, why
-        time.sleep(POLL_S)
+def check(c: Any, find: Any, _id: str, name: str, channel: int) -> bool:
+    """Whether the controller keeps the channel and the radio reports it
+    (when the access point reports its radios); Failed when it will not."""
+    d = find(c.get("stat/device"), _id)
+    if d is None:
+        raise Failed("the controller no longer lists the access point")
+    if channel_of((radio_entry(d, name) or {}).get("channel")) != channel:
+        raise Failed("the controller did not keep it")
+    live = live_channel(d, name)
+    if d.get("state") not in (0, None) and (
+        live == channel or (live is None and not has_stats(d, name))
+    ):
+        return True
+    raise Pending(f"the radio did not report channel {channel} within {VERIFY_S} s")
 
 
 def set_channel(c: Any, d: dict[str, Any], value: Any, find: Any) -> None:
@@ -226,15 +216,14 @@ def set_channel(c: Any, d: dict[str, Any], value: Any, find: Any) -> None:
         return
     before = [r for r in d.get("radio_table") or [] if isinstance(r, dict)]
     endpoint = f"rest/device/{d['_id']}"
-    c.put(endpoint, {"radio_table": changed_table(before, name, channel)})
-    done, why = check(c, find, d["_id"], name, channel)
-    if done:
-        return
-    undone = "undone on the controller"
-    try:
-        c.put(endpoint, {"radio_table": before})
-    except (PluginError, Forbidden, NotFound, ApiError) as e:
-        undone = f"not undone ({e or type(e).__name__}): check the radio in UniFi Network"
-    raise PluginError(
-        f"could not move {name} of {label} to channel {channel}: {why}; the change was {undone}"
+    apply_verify(
+        lambda: c.put(endpoint, {"radio_table": changed_table(before, name, channel)}),
+        lambda: check(c, find, d["_id"], name, channel),
+        lambda: c.put(endpoint, {"radio_table": before}),
+        timeout=VERIFY_S,
+        interval=POLL_S,
+        message=f"could not move {name} of {label} to channel {channel}",
+        check_in="in UniFi Network",
+        undo_failed_apply=False,  # one PUT: all or nothing
+        sleep=time.sleep,
     )
