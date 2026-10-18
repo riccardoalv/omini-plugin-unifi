@@ -360,11 +360,16 @@ def delete_vlan(c: Client, value: Any) -> None:
 
 
 def check(c: Client, done: Any) -> None:
-    """Reads the site's networks until ``done(networks)`` (up to VERIFY_S)."""
+    """Reads the site's networks until ``done(networks)`` (up to VERIFY_S); a
+    read that fails meanwhile (the controller busy provisioning) is retried."""
     deadline = time.monotonic() + VERIFY_S
     while True:
-        if done(c.get("rest/networkconf")):
-            return
+        why = ""
+        try:
+            if done(c.get("rest/networkconf")):
+                return
+        except (PluginError, Forbidden, NotFound, ApiError) as e:
+            why = f" (it did not answer: {e or type(e).__name__})"
         if time.monotonic() >= deadline:
-            raise PluginError("the controller did not apply the VLAN change")
+            raise PluginError(f"the controller did not apply the VLAN change{why}")
         time.sleep(POLL_S)

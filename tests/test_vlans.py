@@ -352,3 +352,23 @@ def test_a_view_only_account_cannot_change_vlans(site, cfg):
     site.view_only = True
     with pytest.raises(PluginError, match="Full Management or Site Admin"):
         apply(cfg, vlan_change("vlan.set", id=40, name="Cameras"))
+
+
+def test_vlan_set_check_rides_out_a_transient_error(site, cfg, monkeypatch):
+    # The controller fails one read while it provisions: the check reads again.
+    import omini_unifi.vlans as vlans_module
+    from omini_unifi.client import ApiError
+
+    monkeypatch.setattr(vlans_module, "VERIFY_S", 5)
+    real_get = Client.get
+    failed = []
+
+    def get(self, endpoint):
+        if endpoint == "rest/networkconf" and site.sent and not failed:
+            failed.append(endpoint)
+            raise ApiError(f"{endpoint}: HTTP 502")
+        return real_get(self, endpoint)
+
+    monkeypatch.setattr(Client, "get", get)
+    devices = apply(cfg, vlan_change("vlan.set", id=40, name="Cameras"))
+    assert failed and vlans_of(devices)[40] == "Cameras"
