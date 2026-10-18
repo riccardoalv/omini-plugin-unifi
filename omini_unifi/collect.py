@@ -330,7 +330,8 @@ def lag_name(members: list[int]) -> str:
 
 def lags(d: dict[str, Any], names: dict[int, str], ifaces: list[Interface]) -> list[Interface]:
     """Marks each aggregated port with its LAG and returns the LAGs themselves
-    (type "lag"): up when a member is, its speed the sum of the members up."""
+    (type "lag", with its members): up when a member is, its speed the sum of
+    the members up."""
     by_name = {i.name: i for i in ifaces}
     out = []
     for members in lag_groups(d):
@@ -346,6 +347,7 @@ def lags(d: dict[str, Any], names: dict[int, str], ifaces: list[Interface]) -> l
             Interface(
                 name=name,
                 type="lag",
+                members=[i.name for i in ports_],
                 up=any(known) if known else None,
                 speed_mbps=speed or None,
             )

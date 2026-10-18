@@ -69,6 +69,7 @@ def test_aggregated_ports_and_their_lag(unifi, cfg, by_override):
     lag = p["LAG 2-3"]
     assert lag.type == "lag" and lag.up is True
     assert lag.speed_mbps == 1000 + 100  # the members up
+    assert lag.members == ["Office AP", "Port 3"]
 
 
 def test_a_lag_with_every_member_down_is_down(unifi, cfg):
