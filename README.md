@@ -10,7 +10,7 @@ One Omini device per **adopted** UniFi device (gateways, switches, access points
 
 | Data | From | Used for |
 |---|---|---|
-| Name, model, serial, firmware, uptime, CPU, memory, load | `stat/device` | Device details and health |
+| Name, model, serial, firmware, uptime, CPU, memory (% and, from `sys_stats`, installed and used), load | `stat/device` | Device details and health |
 | Temperatures, storage (consoles with a disk) | `stat/device` | Health |
 | Pending firmware (`upgradable`, `upgrade_to_firmware`) | `stat/device` | "Update available" — what the controller knows from its own checks; Omini never starts one |
 | Ports: whether each is enabled (`port_overrides` → `forward`, else the port table's `enable`) | `stat/device` | "Disabled" ports and the Enable / Disable button |

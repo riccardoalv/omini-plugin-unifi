@@ -33,6 +33,10 @@ def test_one_device_per_adopted_device(unifi, cfg):
     assert [m.root for m in udm.macs] == ["74:ac:b9:00:00:01", "74:ac:b9:00:00:02"]
     assert (udm.uptime_s, udm.cpu_pct, udm.mem_pct) == (864000, 12.5, 61.3)
     assert udm.load_avg == [0.42, 0.38, 0.35]
+    assert (udm.mem_total_bytes, udm.mem_used_bytes) == (4124000000, 2528000000)
+    # A device without sys_stats leaves its memory empty.
+    switch = next(d for d in devices.values() if d.name == "Rack Switch")
+    assert (switch.mem_total_bytes, switch.mem_used_bytes) == (None, None)
 
 
 def test_health_and_firmware(unifi, cfg):

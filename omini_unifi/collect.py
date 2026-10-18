@@ -563,6 +563,21 @@ def load_avg(d: dict[str, Any]) -> list[float] | None:
     return [v for v in values if v is not None] if all(v is not None for v in values) else None
 
 
+def memory(d: dict[str, Any]) -> dict[str, int]:
+    """Installed and used memory, in bytes (sys_stats); left out on an older
+    SDK that has no such fields."""
+    if "mem_total_bytes" not in Device.model_fields:
+        return {}
+    s = d.get("sys_stats") or {}
+    total, used = count(s.get("mem_total")), count(s.get("mem_used"))
+    if not total:
+        return {}
+    out = {"mem_total_bytes": total}
+    if used is not None and used <= total:
+        out["mem_used_bytes"] = used
+    return out
+
+
 # --- neighbors ---------------------------------------------------------------
 
 
@@ -762,6 +777,7 @@ def device(
         uptime_s=uptime,
         cpu_pct=pct(stats.get("cpu")),
         mem_pct=pct(stats.get("mem")),
+        **memory(d),
         load_avg=load_avg(d),
         temperatures=temperatures(d) or None,
         storage=storage(d) or None,
