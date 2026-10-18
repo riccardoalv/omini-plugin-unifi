@@ -1,0 +1,7 @@
+[
+  {"_id": "tr1", "description": "Omini: pause plug-kitchen", "action": "BLOCK", "enabled": true, "matching_target": "INTERNET", "target_devices": [{"client_mac": "aa:bb:cc:00:00:02", "type": "CLIENT"}], "schedule": {"mode": "ALWAYS", "repeat_on_days": [], "time_all_day": false}, "app_category_ids": [], "app_ids": [], "domains": [], "ip_addresses": [], "ip_ranges": [], "network_ids": [], "regions": [], "bandwidth_limit": {"enabled": false, "download_limit_kbps": 1024, "upload_limit_kbps": 1024}},
+  {"_id": "tr2", "description": "Kids bedtime", "action": "BLOCK", "enabled": true, "matching_target": "INTERNET", "target_devices": [{"client_mac": "aa:bb:cc:00:00:07", "type": "CLIENT"}], "schedule": {"mode": "ALWAYS"}},
+  {"_id": "tr3", "description": "Homework", "action": "BLOCK", "enabled": true, "matching_target": "INTERNET", "target_devices": [{"client_mac": "aa:bb:cc:00:00:08", "type": "CLIENT"}], "schedule": {"mode": "EVERY_DAY", "time_range_start": "20:00", "time_range_end": "22:00"}},
+  {"_id": "tr4", "description": "No social", "action": "BLOCK", "enabled": true, "matching_target": "APP_CATEGORY", "app_category_ids": [13], "target_devices": [{"client_mac": "aa:bb:cc:00:00:01", "type": "CLIENT"}], "schedule": {"mode": "ALWAYS"}},
+  {"_id": "tr5", "description": "IoT offline", "action": "BLOCK", "enabled": true, "matching_target": "INTERNET", "target_devices": [{"network_id": "n2", "type": "NETWORK"}], "schedule": {"mode": "ALWAYS"}}
+]

@@ -1,0 +1,8 @@
+{
+  "meta": {"rc": "ok"},
+  "data": [
+    {"_id": "pf1", "site_id": "s1", "name": "Plex", "enabled": true, "proto": "tcp", "src": "any", "dst_port": "32400", "fwd": "192.168.1.20", "fwd_port": "32400", "pfwd_interface": "wan", "log": false},
+    {"_id": "pf2", "site_id": "s1", "name": "Game", "enabled": false, "proto": "tcp_udp", "src": "198.51.100.0/24", "dst_port": "27015-27030", "fwd": "192.168.1.21", "fwd_port": "27015-27030", "pfwd_interface": "both", "log": false},
+    {"_id": "pf3", "site_id": "s1", "name": "Web", "enabled": true, "proto": "tcp", "src": "any", "dst_port": "80,443", "fwd": "192.168.1.20", "fwd_port": "8080,8443", "pfwd_interface": "wan2", "log": false}
+  ]
+}

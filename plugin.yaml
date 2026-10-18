@@ -8,11 +8,15 @@ description: >-
   UniFi Network controller (UniFi OS consoles or the self-hosted Network
   Application): every adopted gateway, switch and access point with ports, link
   speed, traffic counters, LLDP and uplinks, spanning tree and aggregates (LAGs),
-  Wi-Fi and wired clients, VLANs, WAN status, CPU, memory, temperatures and
-  pending firmware; backs up each device's and the site's settings (no
-  secrets); enables or disables switch ports, sets a switch port's VLANs,
-  creates, renames and deletes VLAN-only networks manages Wi-Fi per VLAN
-  and moves an access point's radio to another channel (saved by the controller, checked on the switch).
+  Wi-Fi and wired clients, radios and their channels, VLANs, WAN status, CPU,
+  memory, temperatures and pending firmware, and the gateway's networks, fixed
+  addresses, DHCP clients, local DNS names, paused devices and port forwards;
+  backs up each device's and the site's settings (no secrets); enables or
+  disables switch ports, sets a switch port's VLANs, creates, renames and
+  deletes VLAN-only networks, manages Wi-Fi per VLAN, moves an access point's
+  radio to another channel, changes the gateway's networks, fixed addresses and
+  DNS names, and pauses a device's internet (saved by the controller, checked
+  on the devices).
 author: Omini
 homepage: https://github.com/riccardoalv/omini-plugin-unifi
 backup: true
@@ -24,6 +28,14 @@ changes:
   - wifi.set
   - wifi.delete
   - wifi.channel
+  - network.set
+  - network.delete
+  - reservation.set
+  - reservation.delete
+  - dns.set
+  - dns.delete
+  - pause.set
+  - pause.delete
 fields:
   - key: url
     type: url

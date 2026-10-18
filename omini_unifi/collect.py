@@ -33,10 +33,11 @@ from omini_sdk import (
 )
 
 from omini_unifi import backup as bk
+from omini_unifi import gateway as gw
 from omini_unifi import radios as rd
 from omini_unifi import vlans as vl
 from omini_unifi import wifi as wlan
-from omini_unifi.client import ApiError, Client, Forbidden, NotFound
+from omini_unifi.client import CHANGE_ROLE, ApiError, Client, Forbidden, NotFound
 
 T = TypeVar("T")
 
@@ -840,6 +841,44 @@ def site_wifi(c: Client, networks: list[dict], missing: list[str]) -> list[Any]:
     return [WifiNetwork.model_validate(w) for w in wlan.wifi_networks(wlans, networks)]
 
 
+def served(
+    c: Client,
+    dev: Device,
+    d: dict[str, Any],
+    networks: list[dict[str, Any]],
+    stations: list[dict[str, Any]],
+    missing: list[str],
+) -> None:
+    """What the gateway serves: its networks, fixed addresses, DHCP clients,
+    domain, local DNS names, paused devices and port forwards (each read is
+    optional: an older controller or a narrower role leaves it empty)."""
+    from omini_sdk import DhcpLease, DhcpReservation, DnsRecord, Network, PausedDevice
+
+    dev.networks = [Network.model_validate(n) for n in gw.networks(networks)] or None
+    dev.dns_domain = gw.domain(networks)
+    users = optional("rest/user", missing, lambda: c.get("rest/user"), [])
+    dev.dhcp_reservations = [
+        DhcpReservation.model_validate(r) for r in gw.reservations(users)
+    ] or None
+    dev.dhcp_leases = [DhcpLease.model_validate(x) for x in gw.leases(stations, networks)] or None
+    records = optional("v2 static-dns", missing, lambda: c.v2("GET", gw.STATIC_DNS), [])
+    dev.dns_records = [DnsRecord.model_validate(r) for r in gw.dns_records(records)] or None
+    rules = optional("v2 trafficrules", missing, lambda: c.v2("GET", gw.TRAFFIC_RULES), [])
+    dev.paused = [PausedDevice.model_validate(p) for p in gw.paused(rules, stations)] or None
+    if "port_forwards" in Device.model_fields:
+        from omini_sdk.models import PortForward
+
+        rows = optional("rest/portforward", missing, lambda: c.get("rest/portforward"), [])
+        wan_names = {
+            ("wan" if n == 1 else f"wan{n}"): name
+            for n in range(1, 5)
+            if (name := text((d.get(f"wan{n}") or {}).get("ifname")))
+        }
+        dev.port_forwards = [
+            PortForward.model_validate(f) for f in gw.port_forwards(rows, wan_names)
+        ] or None
+
+
 def port_profiles(
     c: Client, known: dict[str, dict[str, Any]], missing: list[str]
 ) -> dict[str, dict[str, Any]]:
@@ -875,6 +914,9 @@ def collect(cfg: Config) -> list[Device]:
             dev.fdb = fdb.get(dev.key) or None
             if dev.role == "ap" and ssids:
                 dev.wifi_networks = ssids
+        for dev in out:
+            if dev.role == "router" and known.get(dev.key, {}).get("type") in GATEWAYS:
+                served(c, dev, known[dev.key], networks, stations, missing)
         # Client names go with the gateway (else the first device).
         home = next((d for d in out if d.role == "router"), out[0] if out else None)
         if home and hosts:
@@ -1049,6 +1091,8 @@ def apply(cfg: Config, change: Change) -> list[Device]:
         return apply_vlans(cfg, change)
     if change.kind == "wifi.channel":
         return apply_channel(cfg, change)
+    if change.kind in GATEWAY_CHANGES:
+        return apply_gateway(cfg, change)
     if change.kind != "port.enabled":
         raise PluginError(f"this plugin cannot apply {change.kind}")
     if not isinstance(change.value, bool):
@@ -1100,6 +1144,52 @@ def apply_wifi(cfg: Config, change: Change) -> list[Device]:
         else:
             wlan.delete_wifi(c, str(value.get("ssid") or ""))
             wlan.check(c, None, gone=str(value.get("ssid") or ""))
+    finally:
+        c.close()
+    return collect(cfg)
+
+
+GATEWAY_CHANGES = {
+    "network.set": gw.set_network,
+    "network.delete": gw.delete_network,
+    "reservation.set": gw.set_reservation,
+    "reservation.delete": gw.delete_reservation,
+    "dns.set": gw.set_dns,
+    "dns.delete": gw.delete_dns,
+    "pause.set": gw.set_pause,
+    "pause.delete": gw.delete_pause,
+}
+
+
+def apply_gateway(cfg: Config, change: Change) -> list[Device]:
+    """Networks, fixed addresses, DNS names and pauses of the site's UniFi
+    gateway (see gateway.py): applied, read back until the controller shows
+    them, and undone when it does not."""
+    value = change.value if isinstance(change.value, dict) else {}
+    if not isinstance(change.value, dict):
+        raise PluginError(f"{change.kind} takes an object, not {change.value!r}")
+    c = client_from(cfg)
+    try:
+        known = adopted(c.get("stat/device"))
+        d = known.get(mac(change.device) or "")
+        if d is None or d.get("type") not in GATEWAYS:
+            if not any(x.get("type") in GATEWAYS for x in known.values()):
+                raise PluginError(
+                    "the site has no UniFi gateway: networks, fixed addresses, DNS names and "
+                    "pauses are the router's"
+                )
+            raise PluginError(f"{change.device} is not the site's UniFi gateway")
+        try:
+            if change.kind == "pause.set":
+                gw.set_pause(c, value, set(known))
+            else:
+                GATEWAY_CHANGES[change.kind](c, value)
+        except ApiError as e:
+            raise PluginError(f"the controller refused the change ({e})") from e
+        except NotFound as e:
+            raise PluginError(f"this controller has no {e}: it needs a newer UniFi Network") from e
+        except Forbidden as e:
+            raise PluginError(CHANGE_ROLE) from e
     finally:
         c.close()
     return collect(cfg)

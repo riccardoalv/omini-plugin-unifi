@@ -8,6 +8,9 @@ Two flavors of the same API:
 - The **self-hosted** UniFi Network Application: ``POST /api/login`` (a
   ``unifises`` cookie plus a ``csrf_token`` one), endpoints under ``/api/s/<site>/...``.
 
+Newer endpoints (traffic rules, static DNS) are under ``/v2/api/site/<site>/...``
+next to ``/api`` (behind ``/proxy/network`` on UniFi OS) and answer plain JSON.
+
 The flavor is detected once (``GET /`` answers 200 on UniFi OS, a redirect to
 ``/manage`` on the self-hosted application) and the session (flavor, cookies and
 CSRF token) is kept in the plugin's state folder, so the controller does not see
@@ -251,19 +254,61 @@ class Client:
         except Forbidden as e:
             raise PluginError(CHANGE_ROLE) from e
 
+    def v2(self, method: str, endpoint: str, body: dict[str, Any] | None = None) -> Any:
+        """``<method> /v2/api/site/<site>/<endpoint>``: the newer API of the
+        Network application (traffic rules, static DNS), which answers plain
+        JSON. A GET reads; any other method is a change (only ``apply``
+        calls it) and an account that may only view gets a PluginError naming
+        the role it needs. NotFound: the controller is too old for it."""
+        try:
+            return self._call(method, endpoint, body, v2=True)
+        except Forbidden as e:
+            if method == "GET":
+                raise
+            raise PluginError(CHANGE_ROLE) from e
+
     def _call(
-        self, method: str, endpoint: str, body: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
+        self,
+        method: str,
+        endpoint: str,
+        body: dict[str, Any] | None = None,
+        v2: bool = False,
+    ) -> Any:
         if not self.flavor or not self.http.cookies.jar:
             self.login()
+        request = self._v2_request if v2 else self._request
         try:
-            return self._request(method, endpoint, body)
+            return request(method, endpoint, body)
         except _LoginRequired:
             self.login()
             try:
-                return self._request(method, endpoint, body)
+                return request(method, endpoint, body)
             except _LoginRequired as e:
                 raise PluginError("the controller rejected the session right after login") from e
+
+    def _v2_request(self, method: str, endpoint: str, body: dict[str, Any] | None = None) -> Any:
+        site = quote(self.site, safe="")
+        path = f"{PREFIXES[self.flavor or CLASSIC]}/v2/api/site/{site}/{endpoint}"
+        headers = {"x-csrf-token": self.csrf} if self.csrf else {}
+        r = self._send(method, path, headers=headers, json=body)
+        if r.headers.get("x-updated-csrf-token"):
+            self.csrf = r.headers["x-updated-csrf-token"]
+        if r.status_code == 401:
+            raise _LoginRequired
+        if r.status_code == 403:
+            raise Forbidden(endpoint)
+        if r.status_code == 404:
+            raise NotFound(endpoint)
+        try:
+            answer = r.json() if r.content else None
+        except ValueError as e:
+            raise PluginError(f"{self.base} did not answer {endpoint} with JSON") from e
+        if r.status_code >= 400:
+            msg = ""
+            if isinstance(answer, dict):
+                msg = str(answer.get("message") or answer.get("code") or "")
+            raise ApiError(f"{endpoint}: {msg or f'HTTP {r.status_code}'}")
+        return answer
 
     def _request(
         self, method: str, endpoint: str, body: dict[str, Any] | None = None

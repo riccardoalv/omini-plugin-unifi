@@ -1,6 +1,6 @@
 # omini-plugin-unifi
 
-[Omini](https://github.com/riccardoalv/omini) plugin for **UniFi Network**: UniFi OS consoles (Dream Machine, Dream Router, Cloud Gateway, Cloud Key Gen2+...) and the self-hosted UniFi Network Application. Collecting only reads; it changes the network only when you ask for it in Omini: enabling or disabling a switch port, a switch port's VLANs, the site's VLANs, its Wi-Fi networks and an access point's channel (see [What it changes](#what-it-changes)).
+[Omini](https://github.com/riccardoalv/omini) plugin for **UniFi Network**: UniFi OS consoles (Dream Machine, Dream Router, Cloud Gateway, Cloud Key Gen2+...) and the self-hosted UniFi Network Application. Collecting only reads; it changes the network only when you ask for it in Omini: enabling or disabling a switch port, a switch port's VLANs, the site's VLANs, its Wi-Fi networks, an access point's channel, and the gateway's networks, fixed addresses, DNS names and paused devices (see [What it changes](#what-it-changes)).
 
 > **Experimental.** Built from the API's documentation and the answers its web interface gets; not yet tested on real hardware. Reports of what works (and what does not) are welcome.
 
@@ -27,12 +27,18 @@ One Omini device per **adopted** UniFi device (gateways, switches, access points
 | Client names and IPs | `stat/sta` | Device names |
 | Networks with a VLAN: id, name, subnet | `rest/networkconf` | VLANs of the gateway; every switch carries the site's networks (the untagged LAN as VLAN 1) |
 | A switch port's VLANs: untagged (native) and tagged networks | `stat/device` → `port_overrides`, else the port profile (`rest/portconf`), else `port_table` | VLANs of each switch port, and changing them |
+| Gateway: its networks (corporate networks: VLAN, `ip_subnet` as the gateway, `dhcpd_enabled`/`dhcpd_start`/`dhcpd_stop`; access from `internet_access_enabled` and `network_isolation_enabled` when the controller has them) and the domain it hands out (`domain_name`) | `rest/networkconf` | The network's catalog, phase 2 VLANs, local DNS names |
+| Gateway: fixed addresses (`use_fixedip`, `fixed_ip`) | `rest/user` | Fixed addresses, "Fix IP" |
+| Gateway: DHCP clients (address, MAC, host name of each connected client in a network with DHCP on; no expiry) | `stat/sta` | Fixed addresses, infrastructure on DHCP |
+| Gateway: local DNS names (enabled A and AAAA records) | v2 `static-dns` (Network 8.2+) | Local DNS names |
+| Gateway: paused devices (enabled traffic rules that block the internet, always, for clients by MAC: Omini's, and simple ones set by hand) | v2 `trafficrules` (Network 7+) | Pause marks, "Resume" |
+| Gateway: port forwards (`proto`, `dst_port`, `fwd`, `fwd_port`, `src`, `pfwd_interface`, `name`, `enabled`) | `rest/portforward` | Exposed to the internet (read only) |
 | Spanning tree: each switch or gateway port's state (`stp_state`; RSTP's `discarding` is blocking) and, when reported, its role (`stp_role`) | `stat/device` → `port_table` | Standby links (a blocking port) on the map |
 | Aggregates (LAGs): the ports of each one | `stat/device` → `port_table` (`op_mode: "aggregate"`, `aggregated_by`, `aggregate_num_ports`), else `port_overrides` (`op_mode: "aggregate"` with `aggregate_num_ports` or `aggregate_members`) | The cables of a LAG drawn as one link |
 
 **Aggregates.** UniFi does not list a LAG as an interface of its own: the plugin names it after its ports, `LAG 47-48`, marks each member port with it (`lag`) and adds the LAG itself (type `lag`), up when a member is, its speed the sum of the members that are up. **Spanning tree:** UniFi does not say which bridge is the root, so the root bridge (`stp_root`) is not reported. **SFP modules:** UniFi does not report a module's temperature alarm threshold, so Omini's default applies to hot modules.
 
-Clients, networks and WAN status are optional: if the account cannot read them (or the controller version lacks them), the rest is still collected, and **Test connection** says what is missing.
+Clients, networks, WAN status and everything the gateway serves are optional: if the account cannot read them (or the controller version lacks them), the rest is still collected, and **Test connection** says what is missing.
 
 ## What it changes
 
@@ -51,6 +57,16 @@ Paths are under `/proxy/network/api/s/<site>/` on UniFi OS and `/api/s/<site>/` 
 ### Wi-Fi per VLAN
 
 `wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it (up to 40 s); a `wifi.set` it does not show by then is undone (the WLAN's previous name, network and state put back, or the new WLAN deleted; a changed password cannot be put back, the controller never shows it). The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
+
+### The gateway: networks, fixed addresses, DNS names, pause
+
+With a UniFi gateway (UDM, UDR, UCG, USG, UXG) on the site, its device in Omini takes these changes; on a site without one they are refused (the router is another device). Each is read back (every 3 seconds, up to 40) until the controller shows it, and one it does not show is undone where it can be.
+
+- **`network.set`** (`{vlan, name, gateway, dhcp, access}`): the VLAN's **corporate** network. A new one is `POST rest/networkconf` with `{"name", "ip_subnet": "<gateway>/<prefix>", "dhcpd_enabled", "dhcpd_start", "dhcpd_stop", "purpose": "corporate", "networkgroup": "LAN", "vlan_enabled": true, "vlan", "enabled": true}` (deleted if not shown); an existing one, or a **VLAN only** network of that VLAN (given the gateway; its ports and Wi-Fi stay), is `PUT rest/networkconf/<_id>` with only those fields (put back if not shown). VLAN 1 is the Default LAN and keeps its name. **Access**: Internet only is `internet_access_enabled: true` with `network_isolation_enabled: true`, Whole network `true`/`false`, No internet `false`/`true`; a controller without those fields refuses an access choice (create the network without one and set it in UniFi Network), and `custom` leaves them as they are. Discovery between networks (mDNS) is not set from Omini. Guest networks and a WAN's VLAN are refused.
+- **`network.delete`** (`{vlan}`): `DELETE rest/networkconf/<_id>` of a corporate network; VLAN 1 and a network a Wi-Fi network still uses are refused.
+- **`reservation.set`** (`{mac, ip, name}`): `PUT rest/user/<_id>` with `{"use_fixedip": true, "fixed_ip", "network_id"}` (the network that holds the address); a client the controller has never seen is created (`POST rest/user`, with the name). Undone: the client's previous fields put back. **`reservation.delete`** (`{mac}`): `PUT rest/user/<_id>` with `{"use_fixedip": false}`.
+- **`dns.set`** (`{name, ip}`) and **`dns.delete`** (`{name}`): an A record of the v2 static DNS (`POST`/`PUT`/`DELETE /v2/api/site/<site>/static-dns[/<_id>]`, `{"key": name, "value": ip, "record_type": "A", "enabled": true}`). AAAA records are kept. A controller without it (older than Network 8.2) refuses with a message.
+- **`pause.set`** (`{mac, ips, name}`): a v2 **traffic rule** (`POST /v2/api/site/<site>/trafficrules`) `{"description": "Omini: pause <name>", "action": "BLOCK", "matching_target": "INTERNET", "target_devices": [{"client_mac", "type": "CLIENT"}], "schedule": {"mode": "ALWAYS"}, "enabled": true}`: the device loses the internet and keeps its own network (the NAS, the printer). It is deleted if not shown. **Never** `cmd/stamgr block-sta`: that blocks the client from the network altogether. A controller without traffic rules (older than Network 7) refuses with a message. The site's UniFi devices cannot be paused. **`pause.delete`** (`{mac}`) deletes Omini's rule; a block set by hand for that device alone is turned off (`enabled: false`), one for several devices is refused (change it in UniFi Network).
 
 ### Wi-Fi channels
 
@@ -141,6 +157,8 @@ UniFi's documented API is the official [UniFi Network API](https://developer.ui.
    - `stat/health` — health of each subsystem (WAN status, latency)
    - `rest/portconf` — port profiles, when a switch port uses one or when applying a change
    - `rest/wlanconf` — Wi-Fi networks; `get/setting` — the site's settings (backup only)
+   - `rest/user` — known clients (fixed addresses), `rest/portforward` — port forwards, with a UniFi gateway
+   - `/v2/api/site/<site>/trafficrules` and `/v2/api/site/<site>/static-dns` (behind `/proxy/network` on UniFi OS) — paused devices and DNS names, with a UniFi gateway; an older controller answers 404 and they are left out
 
 Mapping notes:
 
@@ -155,6 +173,7 @@ Mapping notes:
 - **Not tested on hardware.** Field names come from the controller's answers as documented by the community; a firmware may name or scale something differently. In particular, unverified: the direction of client traffic rates (`tx_bytes-r` as the client's download), SFP readings units (`sfp_txpower`/`sfp_rxpower` taken as dBm, `sfp_current` as mA), the `storage` list of consoles, the LLDP fields beyond `chassis_id`/`port_id`/`local_port_idx`, and the uplink of mesh APs. For changes: the `forward` field of port overrides, the built-in "Disabled" profile of older versions, the port table's `enable` and how long a switch takes to report a change were checked only against Omini's emulated controller, and the role names (Full Management, Site Admin) follow Ubiquiti's documentation.
 - `wifi.channel`: the controller accepting a `radio_table` with only `channel` changed, a channel written as a number, and how long a radio takes to report its new channel were checked only against Omini's emulated controller.
 - Radios: `radio_table_stats` (live channel and power, taken as dBm), `ht` as the width in MHz and `channel: "auto"` (or `0`) for an automatic channel were checked only against Omini's emulated controller; whether a radio is turned off is not read (left empty).
+- **The gateway, not verified on hardware**: the v2 `trafficrules` body (`matching_target: "INTERNET"`, `target_devices` with `client_mac`/`type: "CLIENT"`, `schedule.mode: "ALWAYS"`) and whether the block covers IPv6 too; the v2 `static-dns` endpoint and its fields (`key`, `value`, `record_type`, `enabled`) and that a PUT takes the whole record; `POST rest/user` creating a client never seen; `internet_access_enabled` and `network_isolation_enabled` as the access choices (firewall rules or zones set by hand are not read, so a network may show "Whole network" while rules limit it); a `PUT` turning a VLAN only network into a corporate one; the port forward fields (`dst_port`/`fwd_port` lists and ranges, `pfwd_interface` `wan`/`wan2`/`both`, `src` `any`). DHCP clients are the connected clients in a DHCP network (a device with a static address there is listed too), without expiry.
 - PoE (power per port) is read by UniFi but Omini's data model has no place for it yet.
 - STP, aggregates and backup: `stp_state` values, `stp_role` (if any firmware reports it), the aggregate fields (`aggregated_by`, `aggregate_num_ports`, `aggregate_members`, `op_mode` in overrides), the configuration fields of `stat/device` kept in the backup and the sections of `get/setting` were checked only against Omini's emulated controller.
 - Port VLANs: the newer (`tagged_vlan_mgmt`) and older (`tagged_networkconf_ids`) fields, an override set on top of a port profile, and the port table's VLAN fields were checked only against Omini's emulated controller.

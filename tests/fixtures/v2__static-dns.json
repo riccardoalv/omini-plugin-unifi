@@ -1,0 +1,6 @@
+[
+  {"_id": "d1", "key": "nas.home.arpa", "value": "192.168.1.20", "record_type": "A", "enabled": true, "ttl": 0, "port": 0, "priority": 0, "weight": 0},
+  {"_id": "d2", "key": "nas.home.arpa", "value": "fd00::20", "record_type": "AAAA", "enabled": true, "ttl": 0, "port": 0, "priority": 0, "weight": 0},
+  {"_id": "d3", "key": "old.home.arpa", "value": "192.168.1.99", "record_type": "A", "enabled": false, "ttl": 0, "port": 0, "priority": 0, "weight": 0},
+  {"_id": "d4", "key": "www.home.arpa", "value": "nas.home.arpa", "record_type": "CNAME", "enabled": true, "ttl": 0, "port": 0, "priority": 0, "weight": 0}
+]
