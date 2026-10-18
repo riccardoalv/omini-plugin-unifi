@@ -9,6 +9,7 @@ from omini_sdk import Config
 
 import omini_unifi.collect as collect_module
 import omini_unifi.vlans as vlans_module
+import omini_unifi.wifi as wifi_module
 from omini_unifi.client import Client
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -166,6 +167,8 @@ def _install(monkeypatch, fake):
     monkeypatch.setattr(collect_module, "POLL_S", 0)
     monkeypatch.setattr(vlans_module, "VERIFY_S", 0)
     monkeypatch.setattr(vlans_module, "POLL_S", 0)
+    monkeypatch.setattr(wifi_module, "VERIFY_S", 0)
+    monkeypatch.setattr(wifi_module, "POLL_S", 0)
     monkeypatch.setattr(
         collect_module, "Client", partial(Client, transport=httpx.MockTransport(fake.handler))
     )

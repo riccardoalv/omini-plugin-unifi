@@ -9,11 +9,18 @@ never logged nor returned."""
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Any
 
-from omini_sdk import PluginError
+from omini_sdk import PluginError, log
 
-from omini_unifi.client import Client, NotFound
+from omini_unifi.client import ApiError, Client, Forbidden, NotFound
+
+# How long a change waits for the controller to show it, as the other changes.
+VERIFY_S = 40
+POLL_S = 3
+
+Undo = Callable[[], None]
 
 
 def text(value: Any) -> str:
@@ -100,7 +107,9 @@ def user_group(c: Client) -> str | None:
     return str((default or (groups[0] if groups else {})).get("_id") or "") or None
 
 
-def set_wifi(c: Client, want: dict[str, Any]) -> None:
+def set_wifi(c: Client, want: dict[str, Any]) -> Undo:
+    """Sends the change; returns what undoes it (the WLAN's previous fields
+    put back, or the new WLAN deleted)."""
     ssid = str(want["ssid"])
     wlans = c.get("rest/wlanconf")
     networks = c.get("rest/networkconf")
@@ -117,8 +126,11 @@ def set_wifi(c: Client, want: dict[str, Any]) -> None:
     if current is not None:
         if current.get("security") == "open" and want.get("password"):
             body["security"], body["wpa_mode"] = "wpapsk", "wpa2"
-        c.put(f"rest/wlanconf/{current['_id']}", body)
-        return
+        endpoint = f"rest/wlanconf/{current['_id']}"
+        # The controller does not show a passphrase back: one changed stays.
+        previous = {k: current[k] for k in body if k in current}
+        c.put(endpoint, body)
+        return lambda: c.put(endpoint, previous)
     if not want.get("password"):
         raise PluginError("a new Wi-Fi network needs a password")
     body.update({"security": "wpapsk", "wpa_mode": "wpa2", "wlan_band": "both"})
@@ -130,7 +142,15 @@ def set_wifi(c: Client, want: dict[str, Any]) -> None:
     groups = next((w.get("ap_group_ids") for w in wlans if w.get("ap_group_ids")), None)
     if groups:
         body["ap_group_ids"] = groups
-    c.post("rest/wlanconf", body)
+    made = c.post("rest/wlanconf", body)
+    _id = made[0].get("_id") if made else None
+
+    def undo() -> None:
+        ids = [_id] if _id else [w["_id"] for w in c.get("rest/wlanconf") if w.get("name") == ssid]
+        for i in ids:
+            c.delete(f"rest/wlanconf/{i}")
+
+    return undo
 
 
 def delete_wifi(c: Client, ssid: str) -> None:
@@ -141,20 +161,39 @@ def delete_wifi(c: Client, ssid: str) -> None:
     raise PluginError(f'the site has no Wi-Fi network "{ssid}"')
 
 
-def check(c: Client, want: dict[str, Any] | None, gone: str | None = None, tries: int = 5) -> None:
-    """Reads the site again until it has the network as asked (or not at all)."""
-    for i in range(tries):
-        nets = wifi_networks(c.get("rest/wlanconf"), c.get("rest/networkconf"))
-        if gone is not None and not any(n["ssid"] == gone for n in nets):
-            return
-        if want is not None:
-            n = next((n for n in nets if n["ssid"] == want["ssid"]), None)
-            if (
-                n
-                and (want.get("vlan") is None or (n["vlan"] or 1) == int(want["vlan"]))
-                and (want.get("enabled") is None or n["enabled"] == bool(want["enabled"]))
-            ):
+def check(
+    c: Client, want: dict[str, Any] | None, gone: str | None = None, undo: Undo | None = None
+) -> None:
+    """Reads the site again until it has the network as asked (or not at all),
+    up to VERIFY_S; a read that fails meanwhile is retried. When it does not,
+    the change is undone (``undo``) and a PluginError says so."""
+    deadline = time.monotonic() + VERIFY_S
+    while True:
+        why = "it did not show it"
+        try:
+            nets = wifi_networks(c.get("rest/wlanconf"), c.get("rest/networkconf"))
+        except (PluginError, Forbidden, NotFound, ApiError) as e:
+            why = f"it did not answer ({e or type(e).__name__})"
+        else:
+            if gone is not None and not any(n["ssid"] == gone for n in nets):
                 return
-        if i < tries - 1:
-            time.sleep(1)
-    raise PluginError("the controller did not apply the Wi-Fi change")
+            if want is not None:
+                n = next((n for n in nets if n["ssid"] == want["ssid"]), None)
+                if (
+                    n
+                    and (want.get("vlan") is None or (n["vlan"] or 1) == int(want["vlan"]))
+                    and (want.get("enabled") is None or n["enabled"] == bool(want["enabled"]))
+                ):
+                    return
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(POLL_S)
+    message = f"the controller did not apply the Wi-Fi change: {why} within {VERIFY_S} s"
+    if undo is None:
+        raise PluginError(message)
+    try:
+        undo()
+    except (PluginError, Forbidden, NotFound, ApiError) as e:
+        log.warning("could not undo the Wi-Fi change: %s", e or type(e).__name__)
+        raise PluginError(f"{message}; the change was not undone: check it in UniFi Network") from e
+    raise PluginError(f"{message}; the change was undone on the controller")

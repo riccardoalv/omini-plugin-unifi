@@ -1039,13 +1039,14 @@ def apply(cfg: Config, change: Change) -> list[Device]:
 def apply_wifi(cfg: Config, change: Change) -> list[Device]:
     """wifi.set: a Wi-Fi network of the site (its name, VLAN, password, on or
     off); wifi.delete removes it. The controller saves it and provisions every
-    access point; the site is read again until it has it as asked."""
+    access point; the site is read again until it has it as asked, and a
+    wifi.set it does not show is undone."""
     value = change.value if isinstance(change.value, dict) else {}
     c = client_from(cfg)
     try:
         if change.kind == "wifi.set":
-            wlan.set_wifi(c, value)
-            wlan.check(c, value)
+            undo = wlan.set_wifi(c, value)
+            wlan.check(c, value, undo=undo)
         else:
             wlan.delete_wifi(c, str(value.get("ssid") or ""))
             wlan.check(c, None, gone=str(value.get("ssid") or ""))

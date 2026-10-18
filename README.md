@@ -48,7 +48,7 @@ Paths are under `/proxy/network/api/s/<site>/` on UniFi OS and `/api/s/<site>/` 
 
 ### Wi-Fi per VLAN
 
-`wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it. The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
+`wifi.set` and `wifi.delete` manage the site's Wi-Fi networks (`rest/wlanconf`) from the VLANs tab of Omini: a network's name, the VLAN its clients go to, its password (WPA2 personal for a new one) and whether it is on. The VLAN is a UniFi network (`rest/networkconf`): a VLAN with none yet gets a "VLAN only" network, as the controller's own form does. A new WLAN takes the site's default user group and the access point groups of an existing WLAN. The controller saves the change and provisions every access point; the plugin reads the site again until it has it (up to 40 s); a `wifi.set` it does not show by then is undone (the WLAN's previous name, network and state put back, or the new WLAN deleted; a changed password cannot be put back, the controller never shows it). The password goes to the controller only (never logged, never kept by Omini). Every access point reports the site's Wi-Fi networks.
 
 ### VLANs of the switches
 

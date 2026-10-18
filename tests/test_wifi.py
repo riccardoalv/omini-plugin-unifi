@@ -39,6 +39,7 @@ def site(unifi, monkeypatch):
         "data": [{"_id": "u1", "name": "Default"}],
     }
     unifi.sent = []
+    unifi.wifi_drops = set()  # WLAN fields the controller answers ok to but drops
     wlans = unifi.routes["rest/wlanconf"]["data"]
     nets = unifi.routes["rest/networkconf"]["data"]
     inner = unifi.handler
@@ -58,6 +59,8 @@ def site(unifi, monkeypatch):
             )
             body = json.loads(request.content) if request.content else {}
             unifi.sent.append((method, endpoint, body))
+            if endpoint.startswith("rest/wlanconf"):
+                body = {k: v for k, v in body.items() if k not in unifi.wifi_drops}
             _kind, _, _id = endpoint.partition("/")[2].partition("/")
             if endpoint.startswith("rest/networkconf") and method == "POST":
                 made = {"_id": f"n{len(nets) + 1}", **body}
@@ -127,3 +130,48 @@ def test_deletes_a_wifi(site, cfg):
     assert "Things" not in aps_wifi(devices)
     with pytest.raises(PluginError, match="no Wi-Fi network"):
         collect_module.apply(cfg, Change(device="x", kind="wifi.delete", value={"ssid": "Nope"}))
+
+
+def test_a_change_the_controller_does_not_show_is_undone(site, cfg):
+    site.wifi_drops = {"enabled"}
+    value = {"ssid": "IoT", "previous": "Things", "vlan": 30, "enabled": False}
+    with pytest.raises(
+        PluginError, match=r"did not apply the Wi-Fi change.*undone on the controller"
+    ):
+        collect_module.apply(cfg, Change(device="x", kind="wifi.set", value=value))
+    assert site.sent[-1] == (
+        "PUT",
+        "rest/wlanconf/w2",
+        {"name": "Things", "networkconf_id": "n2", "enabled": True},
+    )
+    got = aps_wifi(collect_module.collect(cfg))
+    assert "IoT" not in got and (got["Things"].vlan, got["Things"].enabled) == (20, True)
+
+
+def test_a_new_wifi_the_controller_does_not_show_is_deleted(site, cfg):
+    site.wifi_drops = {"networkconf_id"}
+    value = {"ssid": "Cameras", "vlan": 40, "password": "correct horse"}
+    with pytest.raises(PluginError, match="undone on the controller"):
+        collect_module.apply(cfg, Change(device="x", kind="wifi.set", value=value))
+    assert site.sent[-1] == ("DELETE", "rest/wlanconf/w3", {})
+    assert "Cameras" not in aps_wifi(collect_module.collect(cfg))
+
+
+def test_the_wifi_check_rides_out_a_transient_error(site, cfg, monkeypatch):
+    import omini_unifi.wifi as wifi_module
+    from omini_unifi.client import ApiError
+
+    monkeypatch.setattr(wifi_module, "VERIFY_S", 5)
+    real_get = Client.get
+    failed = []
+
+    def get(self, endpoint):
+        if endpoint == "rest/wlanconf" and site.sent and not failed:
+            failed.append(endpoint)
+            raise ApiError(f"{endpoint}: HTTP 502")
+        return real_get(self, endpoint)
+
+    monkeypatch.setattr(Client, "get", get)
+    value = {"ssid": "Things", "enabled": False}
+    devices = collect_module.apply(cfg, Change(device="x", kind="wifi.set", value=value))
+    assert failed and aps_wifi(devices)["Things"].enabled is False
